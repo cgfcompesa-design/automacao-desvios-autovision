@@ -373,13 +373,62 @@ def validar_placas():
 # CRIAR DRIVER
 # ============================================================
 
+# ============================================================
+# CRIAR DRIVER
+# Funciona localmente e no GitHub Actions
+# ============================================================
+
 def criar_driver():
+
+    print()
+    print("=" * 70)
+    print("INICIANDO NAVEGADOR")
+    print("=" * 70)
 
     options = Options()
 
-    options.add_argument(
-        "--start-maximized"
-    )
+    # --------------------------------------------------------
+    # Detectar GitHub Actions
+    # --------------------------------------------------------
+
+    github_actions = os.getenv("GITHUB_ACTIONS", "").lower() == "true"
+
+    if github_actions:
+
+        print("✓ Ambiente detectado: GitHub Actions")
+        print("✓ Executando navegador em modo HEADLESS")
+
+        options.add_argument("--headless=new")
+
+        options.add_argument("--no-sandbox")
+
+        options.add_argument("--disable-dev-shm-usage")
+
+        options.add_argument("--disable-gpu")
+
+        options.add_argument("--window-size=1920,1080")
+
+        options.add_argument("--disable-software-rasterizer")
+
+        options.add_argument("--remote-debugging-port=9222")
+
+        options.add_argument("--disable-background-networking")
+
+        options.add_argument("--disable-background-timer-throttling")
+
+        options.add_argument("--disable-backgrounding-occluded-windows")
+
+        options.add_argument("--disable-renderer-backgrounding")
+
+    else:
+
+        print("✓ Ambiente detectado: execução local")
+
+        options.add_argument("--start-maximized")
+
+    # --------------------------------------------------------
+    # Opções comuns
+    # --------------------------------------------------------
 
     options.add_argument(
         "--disable-blink-features=AutomationControlled"
@@ -393,12 +442,26 @@ def criar_driver():
         "--disable-popup-blocking"
     )
 
+    options.add_argument(
+        "--disable-extensions"
+    )
+
     options.add_experimental_option(
         "excludeSwitches",
         ["enable-automation"]
     )
 
+    # --------------------------------------------------------
+    # Diretório de download
+    # --------------------------------------------------------
+
+    PASTA_HTML.mkdir(
+        parents=True,
+        exist_ok=True
+    )
+
     preferencias = {
+
         "download.default_directory":
             str(PASTA_HTML.resolve()),
 
@@ -413,6 +476,9 @@ def criar_driver():
 
         "profile.default_content_setting_values.automatic_downloads":
             1,
+
+        "plugins.always_open_pdf_externally":
+            True,
     }
 
     options.add_experimental_option(
@@ -420,15 +486,40 @@ def criar_driver():
         preferencias
     )
 
-    driver = webdriver.Edge(
-        options=options
-    )
+    # --------------------------------------------------------
+    # Criar driver
+    # --------------------------------------------------------
 
-    driver.set_page_load_timeout(
-        120
-    )
+    try:
+
+        driver = webdriver.Edge(
+            options=options
+        )
+
+    except Exception as erro:
+
+        print()
+        print("ERRO AO INICIAR NAVEGADOR")
+        print("-" * 70)
+        print(str(erro))
+        print("-" * 70)
+
+        raise RuntimeError(
+            "Não foi possível iniciar o navegador no ambiente atual."
+        ) from erro
+
+    driver.set_page_load_timeout(120)
+
+    driver.implicitly_wait(2)
+
+    print("✓ Navegador iniciado com sucesso.")
 
     return driver
+
+
+
+
+
 
 
 # ============================================================
