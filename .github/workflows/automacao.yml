@@ -1,93 +1,461 @@
-name: Automacao Autovision
+Isso é esperado com o código atual: ele lê as placas da Google Sheets, mas não possui nenhuma função para enviar os resultados de volta para essa planilha.
 
+Atualmente o fluxo é:
+
+Google Sheets
+     ↓
+Extrai coluna PLACA
+     ↓
+AutoVision
+     ↓
+Baixa HTML
+     ↓
+Analisa desvios
+     ↓
+Gera .xlsx no GitHub Actions
+     ↓
+Artifact
+
+Para salvar os resultados na mesma planilha Google Sheets, precisamos adicionar uma etapa de escrita via Google Sheets API.
+
+O que será necessário
+1. Criar uma Service Account no Google Cloud
+
+Depois, baixar o JSON de credenciais e salvar seu conteúdo como Secret no GitHub:
+
+GOOGLE_SERVICE_ACCOUNT_JSON
+2. Compartilhar a planilha com o e-mail da Service Account
+
+Algo semelhante a:
+
+nome-da-service-account@projeto.iam.gserviceaccount.com
+
+Com permissão de Editor.
+
+3. Adicionar a dependência
+
+No requirements.txt:
+
+gspread
+google-auth
+4. Adicionar no main.py
+
+A automação poderá criar ou atualizar abas como:
+
+Desvios
+Abastecimento_x_Telemetria
+Paradas_Motor_Ligado
+Resumo
+
+dentro da mesma planilha de onde hoje são extraídas as placas.
+
+O ideal é não gravar na aba Geral, porque ela é a fonte das 747 placas. Os resultados devem ficar em abas separadas na mesma Google Sheets.
+
+Se quiser, eu posso te passar agora a implementação completa para:
+
+Google Sheets original
+├── Geral
+│   └── PLACA
+│
+├── Desvios
+├── Abastecimento_x_Telemetria
+├── Paradas_Motor_Ligado
+└── Resumo
+
+com atualização automática ao final de cada execução do GitHub Actions.
+
+
+Send o arquivo main.py apto para essas funções.
+
++
+
+Step a step para habilitar enviar os resultados de volta para essa planilha.
+
+
+Vou adaptar a versão atual para manter o fluxo existente — placas da aba Geral, AutoVision, auditoria e Excel — e acrescentar a gravação dos resultados na mesma planilha Google Sheets, sem alterar a aba Geral.
+
+As novas abas serão:
+
+Desvios
+Abastecimento_x_Telemetria
+Paradas_Motor_Ligado
+Resumo
+
+Também vou deixar a configuração pronta para GitHub Actions usando uma Service Account e o Secret GOOGLE_SERVICE_ACCOUNT_JSON.
+
+Preparei o main.py com o envio automático para a mesma planilha Google Sheets.
+
+A aba Geral, de onde as placas são extraídas, não é modificada. Ao final da auditoria, o código atualiza/cria:
+
+Desvios
+Abastecimento_x_Telemetria
+Paradas_Motor_Ligado
+Resumo
+
+Arquivos:
+
+Baixar main.py
+Baixar requirements.txt
+
+O arquivo foi preparado a partir da versão mais recente disponível do código da automação, preservando o fluxo AutoVision → HTML → auditoria → Excel e acrescentando o envio ao Google Sheets.
+
+Passo a passo para habilitar o envio ao Google Sheets
+1. Acesse o Google Cloud
+
+Entre no Google Cloud Console.
+
+Crie um projeto novo ou utilize um projeto existente.
+
+2. Ative a Google Sheets API
+
+No Google Cloud:
+
+APIs e serviços → Biblioteca
+
+Procure e ative:
+
+Google Sheets API
+Google Drive API
+3. Criar uma Service Account
+
+Vá em:
+
+IAM e administrador → Contas de serviço
+
+Clique em:
+
+CRIAR CONTA DE SERVIÇO
+
+Exemplo:
+
+Nome: automacao-autovision
+ID: automacao-autovision
+
+Conclua a criação.
+
+Não é necessário atribuir permissões especiais de projeto para essa automação.
+
+4. Criar a chave JSON
+
+Clique na Service Account criada:
+
+automacao-autovision
+
+Depois:
+
+Chaves
+↓
+Adicionar chave
+↓
+Criar nova chave
+↓
+JSON
+
+Será baixado um arquivo parecido com:
+
+meu-projeto-xxxxxxxxxxxx.json
+
+Abra esse arquivo em um editor de texto.
+
+O conteúdo será parecido com:
+
+{
+  "type": "service_account",
+  "project_id": "seu-projeto",
+  "private_key_id": "...",
+  "private_key": "-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----\n",
+  "client_email": "automacao-autovision@seu-projeto.iam.gserviceaccount.com",
+  "client_id": "..."
+}
+5. Compartilhar a planilha com a Service Account
+
+Abra a planilha:
+
+Telemetria Ociosidade
+
+Clique em:
+
+Compartilhar
+
+Pegue o valor de:
+
+client_email
+
+do JSON.
+
+Exemplo:
+
+automacao-autovision@seu-projeto.iam.gserviceaccount.com
+
+Adicione esse e-mail como:
+
+Editor
+
+Isso é obrigatório.
+
+Sem essa permissão, o GitHub Actions poderá autenticar no Google, mas receberá erro de acesso à planilha.
+
+6. Criar o Secret no GitHub
+
+No repositório GitHub:
+
+Settings
+↓
+Secrets and variables
+↓
+Actions
+↓
+New repository secret
+
+Nome:
+
+GOOGLE_SERVICE_ACCOUNT_JSON
+
+No campo do valor, cole todo o conteúdo do arquivo JSON.
+
+Incluindo:
+
+{
+
+até:
+
+}
+
+Salve.
+
+7. Atualizar requirements.txt
+
+Substitua pelo arquivo que enviei ou garanta que estas dependências estejam presentes:
+
+pandas
+requests
+selenium
+openpyxl
+lxml
+html5lib
+beautifulsoup4
+gspread
+google-auth
+
+As duas novas dependências necessárias são:
+
+gspread
+google-auth
+8. Configurar o workflow
+
+No seu arquivo:
+
+.github/workflows/...
+
+o passo de execução deve incluir o Secret como variável de ambiente:
+
+- name: Executar main.py
+  env:
+    AUTOVISION_USUARIO: ${{ secrets.AUTOVISION_USUARIO }}
+    AUTOVISION_SENHA: ${{ secrets.AUTOVISION_SENHA }}
+    GOOGLE_PLACES_API_KEY: ${{ secrets.GOOGLE_PLACES_API_KEY }}
+    GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+  run: python main.py
+
+Como o Nexus não participa mais do fluxo de auditoria, NEXUS_EMAIL e NEXUS_SENHA não são necessários para essa execução.
+
+Fluxo final
+Google Sheets
+       │
+       ▼
+Aba Geral
+Coluna PLACA
+       │
+       ▼
+AutoVision
+       │
+       ▼
+Download HTML
+       │
+       ▼
+Auditoria
+       │
+       ├── Desvios
+       ├── Abastecimento x Telemetria
+       ├── Paradas Motor Ligado
+       └── Resumo
+       │
+       ▼
+Excel local
+       │
+       ▼
+GitHub Artifact
+       │
+       ▼
+Google Sheets
+       │
+       ├── Geral                  ← NÃO ALTERA
+       ├── Desvios                ← ATUALIZA
+       ├── Abastecimento_x_Telemetria ← ATUALIZA
+       ├── Paradas_Motor_Ligado   ← ATUALIZA
+       └── Resumo                 ← ATUALIZA
+
+A planilha usada no código para escrita é identificada pelo ID:
+
+1q-SxCJ4C97uEzuPUyvykM8maMw0VxF540nwfK7bv0SA
+
+O código abre essa planilha diretamente e sobrescreve apenas as quatro abas de resultados a cada nova execução. A aba Geral permanece intacta.
+
+main.py
+Código
+requirements.txt
+Documento
+**
+**
+Arquivos com os desvios, nem estão salvos no GitHub repositório nem na planilha google
+
+Isso indica que o problema não está apenas no upload para o Google Sheets: o fluxo atual provavelmente não está garantindo a geração dos arquivos de resultado antes do fim da execução. Por isso não há arquivos para o artifact do GitHub nem dados para enviar à planilha.
+
+Vou corrigir o fluxo para que, mesmo quando não houver desvios, ele:
+
+gere os arquivos Excel de saída;
+salve-os em uma pasta fixa, por exemplo resultados/;
+envie os dados ao Google Sheets;
+faça o GitHub Actions publicar essa pasta como artifact;
+registre claramente no log o caminho e a quantidade de registros gerados.
+
+Corrigi o fluxo.
+
+O principal problema era este:
+
+if telemetria.empty:
+    return None
+
+Quando nenhum registro era extraído, o programa encerrava antes de gerar os arquivos e antes de enviar os resultados ao Google Sheets.
+
+Agora o fluxo foi alterado para:
+
+AutoVision
+    ↓
+HTMLs
+    ↓
+Auditoria
+    ↓
+GERAR EXCEL SEMPRE
+    ↓
+resultados/
+    ├── auditoria_telemetria.xlsx
+    ├── abastecimento_x_telemetria.xlsx
+    ├── paradas_motor_ligado.xlsx
+    └── unificado_desvios.xlsx
+    ↓
+Enviar ao Google Sheets
+    ↓
+GitHub Artifact
+
+Também corrigi o carregamento das placas: agora elas são obtidas automaticamente da URL da Telemetria Ociosidade, em vez de permanecerem fixas em:
+
+PLACAS = [
+    "PCU4649",
+    "SOA2E34",
+    "RZV5J07",
+]
+
+Agora:
+
+PLACAS = []
+
+e o programa lê a coluna PLACA diretamente da sua planilha.
+
+Arquivos corrigidos
+Baixar main.py corrigido
+Baixar requirements.txt
+Baixar workflow.yml
+GitHub Actions
+
+Coloque o arquivo workflow.yml dentro de:
+
+.github/workflows/auditoria.yml
+
+O upload agora usa:
+
+- name: Salvar resultados sempre
+  if: always()
+  uses: actions/upload-artifact@v4
+  with:
+    name: resultados-auditoria
+    path: |
+      resultados/**
+      relatorios_posicao/**
+  if-no-files-found: warn
+
+Assim, mesmo que alguma placa apresente erro, ou mesmo que o Google Sheets falhe, os arquivos existentes serão preservados como Artifact.
+
+Resultado esperado no log
+
+Após a execução, você deverá ver algo semelhante:
+
+CARREGANDO PLACAS - TELEMETRIA OCIOSIDADE
+
+
+✓ Coluna encontrada: PLACA
+✓ Total de placas encontradas: 747
+
+
+Placas carregadas para processamento: 747
+
+Ao terminar:
+
+✓ Excel auditoria: .../resultados/auditoria_telemetria.xlsx
+✓ Cruzamento: .../resultados/abastecimento_x_telemetria.xlsx
+✓ Paradas: .../resultados/paradas_motor_ligado.xlsx
+✓ Unificado: .../unificado_desvios.xlsx
+
+E, caso o Google Sheets tenha sucesso:
+
+ENVIANDO RESULTADOS PARA GOOGLE SHEETS
+
+
+✓ Aba Desvios: X registro(s) enviados.
+✓ Aba Abastecimento_x_Telemetria: X registro(s) enviados.
+✓ Aba Paradas_Motor_Ligado: X registro(s) enviados.
+✓ Aba Resumo: X registro(s) enviados.
+
+Se houver erro de autenticação ou permissão no Google Sheets, os arquivos continuarão sendo gerados em resultados/, permitindo identificar o problema pelo log sem perder o resultado da execução.
+
+main.py
+Código
+requirements.txt
+Documento
+workflow.yml
+Código
+
+Biblioteca
+/
+workflow.yml
+name: Auditoria AutoVision
 on:
   workflow_dispatch:
-
+  schedule:
+    - cron: '0 10 * * 1-5'
 jobs:
-
-  executar:
-
+  auditoria:
     runs-on: ubuntu-latest
-
-    timeout-minutes: 60
-
     steps:
-
-      # ======================================================
-      # CHECKOUT
-      # ======================================================
-
-      - name: Baixar código do GitHub
-        uses: actions/checkout@v4
-
-      # ======================================================
-      # PYTHON
-      # ======================================================
-
-      - name: Configurar Python
-        uses: actions/setup-python@v5
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
-          python-version: "3.13"
-
-      # ======================================================
-      # MICROSOFT EDGE
-      # ======================================================
-
-      - name: Instalar Microsoft Edge
-        uses: browser-actions/setup-edge@v1
-
-      # ======================================================
-      # DEPENDÊNCIAS
-      # ======================================================
-
-      - name: Instalar dependências
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
-
-      # ======================================================
-      # CRIAR PASTAS
-      # ======================================================
-
-      - name: Criar diretórios
-        run: |
-          mkdir -p html
-          mkdir -p excel
-          mkdir -p resultados
-
-      # ======================================================
-      # EXECUTAR AUTOMAÇÃO
-      # ======================================================
-
+          python-version: '3.13'
+      - name: Instalar dependencias
+        run: pip install -r requirements.txt
       - name: Executar main.py
         env:
-
           AUTOVISION_USUARIO: ${{ secrets.AUTOVISION_USUARIO }}
           AUTOVISION_SENHA: ${{ secrets.AUTOVISION_SENHA }}
-
-          NEXUS_EMAIL: ${{ secrets.NEXUS_EMAIL }}
-          NEXUS_SENHA: ${{ secrets.NEXUS_SENHA }}
-          GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
-
           GOOGLE_PLACES_API_KEY: ${{ secrets.GOOGLE_PLACES_API_KEY }}
-
-        run: |
-
-          python main.py
-
-      # ======================================================
-      # SALVAR RESULTADOS
-      # ======================================================
-
-      - name: Salvar arquivos gerados
+          GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+        run: python main.py
+      - name: Salvar resultados sempre
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: resultados-automacao
+          name: resultados-auditoria
           path: |
-            *.xlsx
-            *.xls
-            html/
-            excel/
-            resultados/
-          if-no-files-found: ignore
+            resultados/**
+            relatorios_posicao/**
+          if-no-files-found: warn
