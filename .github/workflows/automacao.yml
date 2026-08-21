@@ -1,10 +1,11 @@
-name: Automação Autovision
+name: Automacao Autovision
 
 on:
   workflow_dispatch:
 
 jobs:
-  executar-automacao:
+
+  executar:
 
     runs-on: ubuntu-latest
 
@@ -12,64 +13,80 @@ jobs:
 
     steps:
 
-      # =====================================================
-      # BAIXAR CÓDIGO
-      # =====================================================
+      # ======================================================
+      # CHECKOUT
+      # ======================================================
 
-      - name: Checkout do repositório
+      - name: Baixar código do GitHub
         uses: actions/checkout@v4
 
-      # =====================================================
+      # ======================================================
       # PYTHON
-      # =====================================================
+      # ======================================================
 
       - name: Configurar Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.13"
 
-      # =====================================================
+      # ======================================================
       # MICROSOFT EDGE
-      # =====================================================
+      # ======================================================
 
       - name: Instalar Microsoft Edge
         uses: browser-actions/setup-edge@v1
 
-      # =====================================================
+      # ======================================================
       # DEPENDÊNCIAS
-      # =====================================================
+      # ======================================================
 
-      - name: Instalar dependências Python
+      - name: Instalar dependências
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      # =====================================================
-      # EXECUTAR
-      # =====================================================
+      # ======================================================
+      # CRIAR PASTAS
+      # ======================================================
+
+      - name: Criar diretórios
+        run: |
+          mkdir -p html
+          mkdir -p excel
+          mkdir -p resultados
+
+      # ======================================================
+      # EXECUTAR AUTOMAÇÃO
+      # ======================================================
 
       - name: Executar main.py
         env:
+
           AUTOVISION_USUARIO: ${{ secrets.AUTOVISION_USUARIO }}
           AUTOVISION_SENHA: ${{ secrets.AUTOVISION_SENHA }}
+
           NEXUS_EMAIL: ${{ secrets.NEXUS_EMAIL }}
           NEXUS_SENHA: ${{ secrets.NEXUS_SENHA }}
+
           GOOGLE_PLACES_API_KEY: ${{ secrets.GOOGLE_PLACES_API_KEY }}
 
         run: |
+
           python main.py
 
-      # =====================================================
+      # ======================================================
       # SALVAR RESULTADOS
-      # =====================================================
+      # ======================================================
 
-      - name: Salvar relatórios gerados
+      - name: Salvar arquivos gerados
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: resultados-automacao
           path: |
             *.xlsx
-            *.html
-            *.htm
+            *.xls
+            html/
+            excel/
+            resultados/
           if-no-files-found: ignore
