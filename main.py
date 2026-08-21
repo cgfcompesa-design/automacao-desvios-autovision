@@ -615,57 +615,123 @@ def carregar_placas_telemetria():
 # Agora a validação é feita depois da leitura da planilha.
 # ============================================================
 
-def validar_placas():
 
-    global PLACAS
-
-    placas_normalizadas = []
-
-    for placa in PLACAS:
-
-        placa_normalizada = (
-            normalizar_placa(
-                placa
-            )
-        )
-
-        if placa_normalizada:
-
-            placas_normalizadas.append(
-                placa_normalizada
-            )
-
-    PLACAS = list(
-        dict.fromkeys(
-            placas_normalizadas
-        )
-    )
-
-    if not PLACAS:
-
-        raise RuntimeError(
-            "Nenhuma placa foi encontrada "
-            "na aba Geral, coluna PLACA, "
-            "da Telemetria Ociosidade."
-        )
-
+def carregar_placas_telemetria_ociosidade():
     print()
     print("=" * 70)
-    print("PLACAS CONFIGURADAS")
+    print("CARREGANDO PLACAS - TELEMETRIA OCIOSIDADE")
     print("=" * 70)
 
-    for indice, placa in enumerate(
-        PLACAS,
-        start=1
-    ):
-
-        print(
-            f"{indice}. {placa}"
+    try:
+        resposta = requests.get(
+            URL_TELEMETRIA_OCIOSIDADE,
+            timeout=60,
+            headers={
+                "User-Agent": "Mozilla/5.0 COMPESA-AuditoriaFrota/1.0"
+            },
         )
 
-    print(
-        f"Total: {len(PLACAS)}"
-    )
+        resposta.raise_for_status()
+
+        conteudo = resposta.content
+
+        try:
+            texto = conteudo.decode("utf-8-sig")
+        except UnicodeDecodeError:
+            texto = conteudo.decode(
+                "latin-1",
+                errors="replace"
+            )
+
+        from io import StringIO
+
+        try:
+            df = pd.read_csv(
+                StringIO(texto),
+                sep=None,
+                engine="python",
+                dtype=object,
+            )
+        except Exception:
+            df = pd.read_csv(
+                StringIO(texto),
+                sep=",",
+                dtype=object,
+            )
+
+        if df.empty:
+            raise RuntimeError(
+                "A Telemetria Ociosidade retornou uma planilha vazia."
+            )
+
+        df.columns = [
+            str(coluna).strip()
+            for coluna in df.columns
+        ]
+
+        coluna_placa = encontrar_coluna(
+            df,
+            [
+                "PLACA",
+                "Placa",
+                "PLACA VEICULO",
+                "PLACA VEÍCULO",
+            ],
+        )
+
+        if coluna_placa is None:
+            raise RuntimeError(
+                "A coluna 'PLACA' não foi encontrada "
+                "na Telemetria Ociosidade."
+            )
+
+        placas = []
+
+        for valor in df[coluna_placa]:
+
+            placa = normalizar_placa(valor)
+
+            if placa and placa not in placas:
+                placas.append(placa)
+
+        if not placas:
+            raise RuntimeError(
+                "Nenhuma placa válida foi encontrada "
+                "na coluna PLACA da Telemetria Ociosidade."
+            )
+
+        print(
+            f"✓ Coluna encontrada: {coluna_placa}"
+        )
+
+        print(
+            f"✓ Total de placas encontradas: {len(placas)}"
+        )
+
+        print(
+            "✓ Placas:"
+        )
+
+        for placa in placas:
+            print(
+                f"   - {placa}"
+            )
+
+        return placas
+
+    except Exception as erro:
+
+        print()
+        print(
+            "❌ ERRO AO CARREGAR PLACAS "
+            "DA TELEMETRIA OCIOSIDADE"
+        )
+
+        print(
+            f"   {erro}"
+        )
+
+        raise
 
 
 # ============================================================
@@ -6001,8 +6067,12 @@ def main():
     # VALIDAR PLACAS
     # ========================================================
 
-    validar_placas()
+    global PLACAS
 
+    PLACAS = carregar_placas_telemetria_ociosidade()
+
+
+    
     # ========================================================
     # PERÍODO
     # ========================================================
