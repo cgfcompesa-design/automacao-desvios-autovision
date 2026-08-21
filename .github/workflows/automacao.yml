@@ -67,6 +67,7 @@ jobs:
 
           NEXUS_EMAIL: ${{ secrets.NEXUS_EMAIL }}
           NEXUS_SENHA: ${{ secrets.NEXUS_SENHA }}
+          GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
 
           GOOGLE_PLACES_API_KEY: ${{ secrets.GOOGLE_PLACES_API_KEY }}
 
