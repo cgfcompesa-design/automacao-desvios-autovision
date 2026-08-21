@@ -191,6 +191,72 @@ TOLERANCIA_ABASTECIMENTO_MIN = 3
 TOLERANCIA_IGNICAO_ABASTECIMENTO_MIN = 3
 
 
+
+
+
+
+
+
+
+
+# ============================================================
+# NOME SEGURO PARA ARQUIVOS
+# ============================================================
+
+def nome_seguro(valor):
+    """
+    Remove caracteres inválidos para nomes de arquivos
+    no Windows/Linux e mantém somente caracteres seguros.
+    """
+
+    texto = str(valor or "").strip()
+
+    if not texto:
+        return "arquivo"
+
+    # Remove caracteres inválidos
+    texto = re.sub(
+        r'[<>:"/\\|?*]',
+        "_",
+        texto
+    )
+
+    # Remove caracteres de controle
+    texto = re.sub(
+        r"[\x00-\x1f\x7f]",
+        "_",
+        texto
+    )
+
+    # Evita espaços repetidos
+    texto = re.sub(
+        r"\s+",
+        "_",
+        texto
+    )
+
+    # Remove pontos/espaços no final
+    texto = texto.rstrip(". ")
+
+    return texto or "arquivo"
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 # ============================================================
 # GOOGLE PLACES API - OPCIONAL / ÚLTIMO RECURSO
 # ============================================================
@@ -2079,70 +2145,161 @@ def clicar_icone_html(
 # ESPERAR DOWNLOAD HTML
 # ============================================================
 
-def esperar_download_html(
-    arquivos_antes
-):
+def esperar_download_html(arquivos_antes, timeout=None):
 
-    limite = (
-        time.time() +
-        TIMEOUT_DOWNLOAD
+    if timeout is None:
+        timeout = TIMEOUT_DOWNLOAD
+
+    PASTA_HTML.mkdir(
+        parents=True,
+        exist_ok=True
     )
+
+    limite = time.time() + timeout
+
+    print("⬇ Aguardando download HTML...")
 
     while time.time() < limite:
 
-        arquivos = [
-            arquivo
-            for arquivo in PASTA_HTML.iterdir()
-            if arquivo.is_file()
-        ]
-
-        novos = [
-            arquivo
-            for arquivo in arquivos
-            if (
-                arquivo.name
-                not in arquivos_antes
+        try:
+            arquivos = list(
+                PASTA_HTML.iterdir()
             )
-            and
-            arquivo.suffix.lower()
-            in {
+        except Exception:
+            arquivos = []
+
+        # ----------------------------------------------------
+        # Arquivos temporários
+        # ----------------------------------------------------
+
+        temporarios = []
+
+        for arquivo in arquivos:
+
+            if not arquivo.is_file():
+                continue
+
+            nome = arquivo.name.lower()
+
+            if (
+                nome.endswith(".crdownload")
+                or
+                nome.endswith(".tmp")
+                or
+                nome.endswith(".part")
+            ):
+                temporarios.append(arquivo)
+
+        # ----------------------------------------------------
+        # Novos HTMLs
+        # ----------------------------------------------------
+
+        novos = []
+
+        for arquivo in arquivos:
+
+            if not arquivo.is_file():
+                continue
+
+            if arquivo.name in arquivos_antes:
+                continue
+
+            if arquivo.suffix.lower() not in {
                 ".html",
                 ".htm"
-            }
-            and
-            not arquivo.name.endswith(
-                ".crdownload"
-            )
-        ]
+            }:
+                continue
 
-        if novos:
+            novos.append(
+                arquivo
+            )
+
+        if novos and not temporarios:
 
             arquivo = max(
                 novos,
-                key=lambda x:
-                x.stat().st_mtime
+                key=lambda x: x.stat().st_mtime
             )
 
-            tamanho_1 = (
-                arquivo.stat().st_size
-            )
+            # ------------------------------------------------
+            # Confirmar que terminou de gravar
+            # ------------------------------------------------
 
-            time.sleep(1)
+            try:
 
-            if arquivo.exists():
+                tamanho_anterior = (
+                    arquivo.stat().st_size
+                )
 
-                tamanho_2 = (
+                time.sleep(1)
+
+                if not arquivo.exists():
+                    continue
+
+                tamanho_atual = (
                     arquivo.stat().st_size
                 )
 
                 if (
-                    tamanho_1 ==
-                    tamanho_2
+                    tamanho_atual == tamanho_anterior
+                    and
+                    tamanho_atual > 0
                 ):
+
+                    print(
+                        f"✓ HTML baixado: "
+                        f"{arquivo.name}"
+                    )
 
                     return arquivo
 
+            except (
+                FileNotFoundError,
+                OSError
+            ):
+                continue
+
         time.sleep(0.5)
+
+    # ========================================================
+    # DIAGNÓSTICO
+    # ========================================================
+
+    print()
+    print("!" * 70)
+    print("❌ DOWNLOAD HTML NÃO CONFIRMADO")
+    print("!" * 70)
+
+    try:
+
+        arquivos_finais = [
+            arquivo.name
+            for arquivo in PASTA_HTML.iterdir()
+            if arquivo.is_file()
+        ]
+
+        print(
+            "Arquivos encontrados na pasta HTML:"
+        )
+
+        if arquivos_finais:
+
+            for nome in arquivos_finais[-20:]:
+                print(
+                    f"   - {nome}"
+                )
+
+        else:
+
+            print(
+                "   Nenhum arquivo encontrado."
+            )
+
+    except Exception as erro:
+
+        print(
+            f"⚠ Erro listando pasta HTML: {erro}"
+        )
 
     return None
 
