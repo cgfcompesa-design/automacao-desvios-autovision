@@ -1,13 +1,22 @@
-name: Automação AutoVision - Auditoria
+name: AutoVision - Auditoria de Telemetria
 
 on:
+
+  # Execução manual pelo GitHub
   workflow_dispatch:
 
+  # Execução automática
+  # Segunda a sexta-feira às 08:00 UTC
+  # = 05:00 no horário de Recife
   schedule:
-    - cron: "0 11 * * 1-5"
+    - cron: "0 8 * * 1-5"
+
 
 jobs:
+
   executar:
+
+    name: Executar Automação AutoVision
 
     runs-on: windows-latest
 
@@ -16,124 +25,221 @@ jobs:
     steps:
 
       # ======================================================
-      # 1. BAIXAR REPOSITÓRIO
+      # 1 - BAIXAR REPOSITÓRIO
       # ======================================================
 
-      - name: Checkout
+      - name: Checkout do repositório
+
         uses: actions/checkout@v4
 
 
       # ======================================================
-      # 2. PYTHON
+      # 2 - CONFIGURAR PYTHON
       # ======================================================
 
       - name: Configurar Python
+
         uses: actions/setup-python@v5
+
         with:
           python-version: "3.13"
 
 
       # ======================================================
-      # 3. DEPENDÊNCIAS
+      # 3 - ATUALIZAR PIP
+      # ======================================================
+
+      - name: Atualizar pip
+
+        shell: powershell
+
+        run: |
+
+          python -m pip install --upgrade pip
+
+
+      # ======================================================
+      # 4 - INSTALAR DEPENDÊNCIAS
       # ======================================================
 
       - name: Instalar dependências
+
         shell: powershell
+
         run: |
-          python -m pip install --upgrade pip
+
           pip install -r requirements.txt
 
 
       # ======================================================
-      # 4. VERIFICAR EDGE
+      # 5 - VERIFICAR PYTHON
+      # ======================================================
+
+      - name: Verificar Python
+
+        shell: powershell
+
+        run: |
+
+          python --version
+
+          pip --version
+
+
+      # ======================================================
+      # 6 - VERIFICAR MICROSOFT EDGE
       # ======================================================
 
       - name: Verificar Microsoft Edge
+
         shell: powershell
+
         run: |
-          $edge = "${env:ProgramFiles(x86)}\Microsoft\Edge\Application\msedge.exe"
 
-          if (!(Test-Path $edge)) {
-              $edge = "${env:ProgramFiles}\Microsoft\Edge\Application\msedge.exe"
+          $edge1 = "${env:ProgramFiles(x86)}\Microsoft\Edge\Application\msedge.exe"
+
+          $edge2 = "${env:ProgramFiles}\Microsoft\Edge\Application\msedge.exe"
+
+          if (Test-Path $edge1) {
+
+              Write-Host "Microsoft Edge encontrado:"
+              & $edge1 --version
+
           }
 
-          if (!(Test-Path $edge)) {
+          elseif (Test-Path $edge2) {
+
+              Write-Host "Microsoft Edge encontrado:"
+              & $edge2 --version
+
+          }
+
+          else {
+
               Write-Error "Microsoft Edge não encontrado."
-              exit 1
-          }
 
-          & $edge --version
+              exit 1
+
+          }
 
 
       # ======================================================
-      # 5. CRIAR PASTAS
+      # 7 - CRIAR PASTAS
       # ======================================================
 
       - name: Criar diretórios
+
         shell: powershell
+
         run: |
-          New-Item -ItemType Directory -Force -Path html
-          New-Item -ItemType Directory -Force -Path excel
-          New-Item -ItemType Directory -Force -Path logs
+
+          New-Item `
+            -ItemType Directory `
+            -Force `
+            -Path html
+
+          New-Item `
+            -ItemType Directory `
+            -Force `
+            -Path excel
+
+          New-Item `
+            -ItemType Directory `
+            -Force `
+            -Path logs
 
 
       # ======================================================
-      # 6. EXECUTAR AUTOMAÇÃO
+      # 8 - EXECUTAR MAIN
       # ======================================================
 
       - name: Executar main.py
+
         env:
+
           AUTOVISION_USUARIO: ${{ secrets.AUTOVISION_USUARIO }}
+
           AUTOVISION_SENHA: ${{ secrets.AUTOVISION_SENHA }}
 
           NEXUS_EMAIL: ${{ secrets.NEXUS_EMAIL }}
+
           NEXUS_SENHA: ${{ secrets.NEXUS_SENHA }}
 
           GOOGLE_PLACES_API_KEY: ${{ secrets.GOOGLE_PLACES_API_KEY }}
 
         shell: powershell
+
         run: |
+
+          Write-Host "=========================================="
+
+          Write-Host "INICIANDO AUTOMAÇÃO AUTOVISION"
+
+          Write-Host "=========================================="
+
           python main.py 2>&1 | Tee-Object -FilePath logs\execucao.log
 
           if ($LASTEXITCODE -ne 0) {
+
+              Write-Error "main.py terminou com erro."
+
               exit $LASTEXITCODE
+
           }
 
 
       # ======================================================
-      # 7. GUARDAR HTMLS
+      # 9 - SALVAR HTMLs
       # ======================================================
 
-      - name: Upload HTMLs
+      - name: Salvar HTMLs do AutoVision
+
         if: always()
+
         uses: actions/upload-artifact@v4
+
         with:
+
           name: autovision-html
+
           path: html/
+
           if-no-files-found: warn
 
 
       # ======================================================
-      # 8. GUARDAR EXCEL
+      # 10 - SALVAR EXCEL
       # ======================================================
 
-      - name: Upload Excel
+      - name: Salvar Excel da auditoria
+
         if: always()
+
         uses: actions/upload-artifact@v4
+
         with:
+
           name: auditoria-excel
+
           path: excel/
+
           if-no-files-found: warn
 
 
       # ======================================================
-      # 9. GUARDAR LOG
+      # 11 - SALVAR LOG
       # ======================================================
 
-      - name: Upload log
+      - name: Salvar log da execução
+
         if: always()
+
         uses: actions/upload-artifact@v4
+
         with:
+
           name: log-execucao
+
           path: logs/
+
           if-no-files-found: warn
