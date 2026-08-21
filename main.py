@@ -44,7 +44,6 @@ URL_RELATORIO_POSICAO = (
     "relatorio_posicao.php"
 )
 
-URL_NEXUS = "https://nexusfrotabi.vercel.app/"
 
 
 # ============================================================
