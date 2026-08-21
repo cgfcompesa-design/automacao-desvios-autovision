@@ -1,245 +1,75 @@
-name: AutoVision - Auditoria de Telemetria
+name: Automação Autovision
 
 on:
-
-  # Execução manual pelo GitHub
   workflow_dispatch:
 
-  # Execução automática
-  # Segunda a sexta-feira às 08:00 UTC
-  # = 05:00 no horário de Recife
-  schedule:
-    - cron: "0 8 * * 1-5"
-
-
 jobs:
+  executar-automacao:
 
-  executar:
+    runs-on: ubuntu-latest
 
-    name: Executar Automação AutoVision
-
-    runs-on: windows-latest
-
-    timeout-minutes: 120
+    timeout-minutes: 60
 
     steps:
 
-      # ======================================================
-      # 1 - BAIXAR REPOSITÓRIO
-      # ======================================================
+      # =====================================================
+      # BAIXAR CÓDIGO
+      # =====================================================
 
       - name: Checkout do repositório
-
         uses: actions/checkout@v4
 
-
-      # ======================================================
-      # 2 - CONFIGURAR PYTHON
-      # ======================================================
+      # =====================================================
+      # PYTHON
+      # =====================================================
 
       - name: Configurar Python
-
         uses: actions/setup-python@v5
-
         with:
           python-version: "3.13"
 
+      # =====================================================
+      # MICROSOFT EDGE
+      # =====================================================
 
-      # ======================================================
-      # 3 - ATUALIZAR PIP
-      # ======================================================
+      - name: Instalar Microsoft Edge
+        uses: browser-actions/setup-edge@v1
 
-      - name: Atualizar pip
+      # =====================================================
+      # DEPENDÊNCIAS
+      # =====================================================
 
-        shell: powershell
-
+      - name: Instalar dependências Python
         run: |
-
           python -m pip install --upgrade pip
-
-
-      # ======================================================
-      # 4 - INSTALAR DEPENDÊNCIAS
-      # ======================================================
-
-      - name: Instalar dependências
-
-        shell: powershell
-
-        run: |
-
           pip install -r requirements.txt
 
-
-      # ======================================================
-      # 5 - VERIFICAR PYTHON
-      # ======================================================
-
-      - name: Verificar Python
-
-        shell: powershell
-
-        run: |
-
-          python --version
-
-          pip --version
-
-
-      # ======================================================
-      # 6 - VERIFICAR MICROSOFT EDGE
-      # ======================================================
-
-      - name: Verificar Microsoft Edge
-
-        shell: powershell
-
-        run: |
-
-          $edge1 = "${env:ProgramFiles(x86)}\Microsoft\Edge\Application\msedge.exe"
-
-          $edge2 = "${env:ProgramFiles}\Microsoft\Edge\Application\msedge.exe"
-
-          if (Test-Path $edge1) {
-
-              Write-Host "Microsoft Edge encontrado:"
-              & $edge1 --version
-
-          }
-
-          elseif (Test-Path $edge2) {
-
-              Write-Host "Microsoft Edge encontrado:"
-              & $edge2 --version
-
-          }
-
-          else {
-
-              Write-Error "Microsoft Edge não encontrado."
-
-              exit 1
-
-          }
-
-
-      # ======================================================
-      # 7 - CRIAR PASTAS
-      # ======================================================
-
-      - name: Criar diretórios
-
-        shell: powershell
-
-        run: |
-
-          New-Item `
-            -ItemType Directory `
-            -Force `
-            -Path html
-
-          New-Item `
-            -ItemType Directory `
-            -Force `
-            -Path excel
-
-          New-Item `
-            -ItemType Directory `
-            -Force `
-            -Path logs
-
-
-      # ======================================================
-      # 8 - EXECUTAR MAIN
-      # ======================================================
+      # =====================================================
+      # EXECUTAR
+      # =====================================================
 
       - name: Executar main.py
-
         env:
-
           AUTOVISION_USUARIO: ${{ secrets.AUTOVISION_USUARIO }}
-
           AUTOVISION_SENHA: ${{ secrets.AUTOVISION_SENHA }}
-
           NEXUS_EMAIL: ${{ secrets.NEXUS_EMAIL }}
-
           NEXUS_SENHA: ${{ secrets.NEXUS_SENHA }}
-
           GOOGLE_PLACES_API_KEY: ${{ secrets.GOOGLE_PLACES_API_KEY }}
 
-        shell: powershell
-
         run: |
+          python main.py
 
-          Write-Host "=========================================="
+      # =====================================================
+      # SALVAR RESULTADOS
+      # =====================================================
 
-          Write-Host "INICIANDO AUTOMAÇÃO AUTOVISION"
-
-          Write-Host "=========================================="
-
-          python main.py 2>&1 | Tee-Object -FilePath logs\execucao.log
-
-          if ($LASTEXITCODE -ne 0) {
-
-              Write-Error "main.py terminou com erro."
-
-              exit $LASTEXITCODE
-
-          }
-
-
-      # ======================================================
-      # 9 - SALVAR HTMLs
-      # ======================================================
-
-      - name: Salvar HTMLs do AutoVision
-
+      - name: Salvar relatórios gerados
         if: always()
-
         uses: actions/upload-artifact@v4
-
         with:
-
-          name: autovision-html
-
-          path: html/
-
-          if-no-files-found: warn
-
-
-      # ======================================================
-      # 10 - SALVAR EXCEL
-      # ======================================================
-
-      - name: Salvar Excel da auditoria
-
-        if: always()
-
-        uses: actions/upload-artifact@v4
-
-        with:
-
-          name: auditoria-excel
-
-          path: excel/
-
-          if-no-files-found: warn
-
-
-      # ======================================================
-      # 11 - SALVAR LOG
-      # ======================================================
-
-      - name: Salvar log da execução
-
-        if: always()
-
-        uses: actions/upload-artifact@v4
-
-        with:
-
-          name: log-execucao
-
-          path: logs/
-
-          if-no-files-found: warn
+          name: resultados-automacao
+          path: |
+            *.xlsx
+            *.html
+            *.htm
+          if-no-files-found: ignore
