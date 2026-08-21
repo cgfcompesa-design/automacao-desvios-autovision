@@ -1,0 +1,37 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# Ambientes
+.venv/
+venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+
+# Arquivos gerados
+html/*
+excel/*
+logs/*
+
+# Excel temporário
+~$*.xlsx
+~$*.xls
+
+# Downloads temporários
+*.crdownload
+*.tmp
+
+# Configurações locais
+.env
+
+# Driver local - NÃO necessário no GitHub Actions
+msedgedriver.exe
+
+# Sistema
+.DS_Store
+Thumbs.db
