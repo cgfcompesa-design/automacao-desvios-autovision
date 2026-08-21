@@ -737,10 +737,11 @@ def carregar_placas_telemetria_ociosidade():
 # ============================================================
 # CRIAR DRIVER EDGE
 #
-# O Selenium Manager baixa automaticamente o
-# msedgedriver.exe compatível com o Edge.
+# Compatível com:
+# - Windows local
+# - GitHub Actions / Linux
 #
-# Não é necessário informar manualmente o caminho.
+# O Selenium Manager gerencia automaticamente o driver.
 # ============================================================
 
 def criar_driver():
@@ -752,25 +753,80 @@ def criar_driver():
 
     options = Options()
 
-    options.add_argument(
-        "--start-maximized"
-    )
+    # ========================================================
+    # AMBIENTE GITHUB ACTIONS / LINUX
+    # ========================================================
+
+    # GitHub Actions normalmente não possui interface gráfica.
+    # O Edge precisa funcionar em modo headless.
+    options.add_argument("--headless=new")
+
+    # Evita problemas de sandbox no ambiente Linux do runner.
+    options.add_argument("--no-sandbox")
+
+    # Evita problemas de memória compartilhada (/dev/shm).
+    options.add_argument("--disable-dev-shm-usage")
+
+    # Evita problemas relacionados à GPU.
+    options.add_argument("--disable-gpu")
+
+    # Tamanho da janela virtual do navegador.
+    options.add_argument("--window-size=1920,1080")
+
+    # ========================================================
+    # ESTABILIDADE
+    # ========================================================
+
+    options.add_argument("--disable-notifications")
+
+    options.add_argument("--disable-popup-blocking")
 
     options.add_argument(
         "--disable-blink-features=AutomationControlled"
     )
 
     options.add_argument(
-        "--disable-notifications"
+        "--disable-background-networking"
     )
 
     options.add_argument(
-        "--disable-popup-blocking"
+        "--disable-background-timer-throttling"
     )
+
+    options.add_argument(
+        "--disable-backgrounding-occluded-windows"
+    )
+
+    options.add_argument(
+        "--disable-renderer-backgrounding"
+    )
+
+    options.add_argument(
+        "--no-first-run"
+    )
+
+    options.add_argument(
+        "--no-default-browser-check"
+    )
+
+    # ========================================================
+    # REDUZ INDÍCIOS DE AUTOMAÇÃO
+    # ========================================================
 
     options.add_experimental_option(
         "excludeSwitches",
-        ["enable-automation"]
+        [
+            "enable-automation"
+        ]
+    )
+
+    # ========================================================
+    # DOWNLOAD DOS HTMLs
+    # ========================================================
+
+    PASTA_HTML.mkdir(
+        parents=True,
+        exist_ok=True
     )
 
     preferencias = {
@@ -788,6 +844,9 @@ def criar_driver():
 
         "profile.default_content_setting_values.automatic_downloads":
             1,
+
+        "download_restrictions":
+            0,
     }
 
     options.add_experimental_option(
@@ -795,14 +854,13 @@ def criar_driver():
         preferencias
     )
 
-    # --------------------------------------------------------
-    # NÃO INFORMAR executable_path.
-    #
-    # O Selenium Manager identifica a versão do Edge e baixa
-    # automaticamente o msedgedriver.exe necessário.
-    # --------------------------------------------------------
+    # ========================================================
+    # INICIAR EDGE
+    # ========================================================
 
     try:
+
+        print("Iniciando Edge via Selenium Manager...")
 
         driver = webdriver.Edge(
             options=options
@@ -810,24 +868,90 @@ def criar_driver():
 
     except Exception as erro:
 
+        print()
+        print("=" * 70)
+        print("❌ ERRO AO INICIAR MICROSOFT EDGE")
+        print("=" * 70)
+        print(erro)
+
         raise RuntimeError(
             "Não foi possível iniciar o Microsoft Edge.\n\n"
-            "O Selenium tentou localizar/baixar "
-            "automaticamente o msedgedriver.exe.\n\n"
+            "Verifique se o workflow do GitHub Actions "
+            "instalou o Microsoft Edge corretamente.\n\n"
             f"Erro original: {erro}"
+        ) from erro
+
+    # ========================================================
+    # CONFIGURAÇÕES DO DRIVER
+    # ========================================================
+
+    try:
+
+        driver.set_page_load_timeout(
+            120
         )
 
-    driver.set_page_load_timeout(
-        120
-    )
+    except Exception:
+        pass
+
+    try:
+
+        driver.set_script_timeout(
+            120
+        )
+
+    except Exception:
+        pass
+
+    # ========================================================
+    # LIBERAR DOWNLOADS EM HEADLESS
+    # ========================================================
+
+    try:
+
+        driver.execute_cdp_cmd(
+            "Browser.setDownloadBehavior",
+            {
+                "behavior": "allow",
+                "downloadPath": str(
+                    PASTA_HTML.resolve()
+                ),
+            }
+        )
+
+        print(
+            "✓ Download automático habilitado."
+        )
+
+    except Exception as erro:
+
+        print(
+            f"⚠ Não foi possível configurar "
+            f"download via CDP: {erro}"
+        )
+
+    # ========================================================
+    # RESULTADO
+    # ========================================================
 
     print(
         "✓ Microsoft Edge iniciado."
     )
 
     print(
-        "✓ msedgedriver gerenciado automaticamente "
-        "pelo Selenium."
+        "✓ Modo headless ativo."
+    )
+
+    print(
+        "✓ Ambiente compatível com GitHub Actions."
+    )
+
+    print(
+        "✓ Selenium Manager responsável pelo WebDriver."
+    )
+
+    print(
+        f"✓ Pasta HTML: {PASTA_HTML.resolve()}"
     )
 
     return driver
