@@ -2213,3 +2213,3992 @@ def processar_placas(
         )
 
     return arquivos_html
+
+
+
+
+# ============================================================
+# DATA / ARQUIVO
+# ============================================================
+
+def normalizar_data(valor):
+    """Sempre retorna datetime.date, evitando .date() duplicado."""
+    if valor is None:
+        return None
+
+    if isinstance(valor, datetime):
+        return valor.date()
+
+    from datetime import date as _date
+
+    if isinstance(valor, _date):
+        return valor
+
+    try:
+        convertido = pd.to_datetime(
+            valor,
+            dayfirst=True,
+            errors="coerce"
+        )
+
+        if pd.isna(convertido):
+            return None
+
+        if isinstance(convertido, pd.Timestamp):
+            return convertido.date()
+
+        return convertido.date()
+
+    except Exception:
+        return None
+
+
+def obter_data_arquivo(arquivo):
+    match = PADRAO_ARQUIVO.search(arquivo.stem)
+
+    if not match:
+        return None
+
+    try:
+        return datetime.strptime(
+            match.group("data"),
+            "%Y%m%d"
+        ).date()
+
+    except ValueError:
+        return None
+
+
+def obter_placa_arquivo(arquivo):
+    match = PADRAO_ARQUIVO.search(arquivo.stem)
+
+    if match:
+        return normalizar_placa(
+            match.group("placa")
+        )
+
+    return normalizar_placa(
+        arquivo.stem.split("_")[0]
+    )
+
+
+def listar_htmls_periodo(inicio, fim):
+
+    inicio = normalizar_data(inicio)
+    fim = normalizar_data(fim)
+
+    arquivos = []
+
+    for arquivo in PASTA_HTML.iterdir():
+
+        if (
+            not arquivo.is_file()
+            or arquivo.suffix.lower()
+            not in {".html", ".htm"}
+        ):
+            continue
+
+        data = obter_data_arquivo(arquivo)
+
+        # Arquivos sem data no padrão também são mantidos.
+        if (
+            data is None
+            or (
+                inicio <= data <= fim
+            )
+        ):
+            arquivos.append(arquivo)
+
+    return sorted(
+        arquivos,
+        key=lambda x: x.stat().st_mtime
+    )
+
+
+def nome_coluna_normalizado(nome):
+
+    return re.sub(
+        r"[^A-Z0-9]",
+        "",
+        normalizar_texto(nome)
+    )
+
+
+def encontrar_coluna(df, alternativas):
+
+    mapa = {
+        nome_coluna_normalizado(c): c
+        for c in df.columns
+    }
+
+    for alternativa in alternativas:
+
+        chave = nome_coluna_normalizado(
+            alternativa
+        )
+
+        if chave in mapa:
+            return mapa[chave]
+
+    for chave, original in mapa.items():
+
+        for alternativa in alternativas:
+
+            alvo = nome_coluna_normalizado(
+                alternativa
+            )
+
+            if alvo and (
+                alvo in chave
+                or chave in alvo
+            ):
+                return original
+
+    return None
+
+
+def converter_float(valor):
+
+    if (
+        valor is None
+        or (
+            isinstance(valor, float)
+            and pd.isna(valor)
+        )
+    ):
+        return 0.0
+
+    texto = str(valor).strip().replace(
+        " ",
+        ""
+    )
+
+    if "," in texto and "." in texto:
+
+        texto = (
+            texto
+            .replace(".", "")
+            .replace(",", ".")
+        )
+
+    else:
+
+        texto = texto.replace(
+            ",",
+            "."
+        )
+
+    try:
+        return float(texto)
+
+    except Exception:
+        return 0.0
+
+
+def limpar_motorista(valor):
+
+    texto = normalizar_texto(valor)
+
+    texto = re.sub(
+        r"[^A-Z0-9 ]",
+        " ",
+        texto
+    )
+
+    texto = re.sub(
+        r"\s+",
+        " ",
+        texto
+    ).strip()
+
+    invalidos = {
+        "",
+        "-",
+        "--",
+        "N A",
+        "NA",
+        "N/A",
+        "NULL",
+        "NONE",
+        "SEM",
+        "SEM MOTORISTA",
+        "SEMMOTORISTA",
+        "0",
+    }
+
+    if (
+        texto in invalidos
+        or len(texto) <= 2
+    ):
+        return ""
+
+    return texto
+
+
+def enderecos_compativeis(a, b):
+
+    if not a or not b:
+        return True
+
+    a = normalizar_texto(a)
+    b = normalizar_texto(b)
+
+    a = re.sub(
+        r"[^A-Z0-9 ]",
+        " ",
+        a
+    )
+
+    b = re.sub(
+        r"[^A-Z0-9 ]",
+        " ",
+        b
+    )
+
+    a = re.sub(
+        r"\s+",
+        " ",
+        a
+    ).strip()
+
+    b = re.sub(
+        r"\s+",
+        " ",
+        b
+    ).strip()
+
+    return (
+        a in b
+        or b in a
+    )
+
+
+def ler_html_telemetria(arquivo):
+
+    try:
+
+        tabelas = pd.read_html(
+            str(arquivo)
+        )
+
+    except Exception as erro:
+
+        print(
+            f"⚠ Erro lendo {arquivo.name}: {erro}"
+        )
+
+        return pd.DataFrame()
+
+    registros = []
+
+    placa = obter_placa_arquivo(
+        arquivo
+    )
+
+    for df in tabelas:
+
+        if df.empty:
+            continue
+
+        col_data = encontrar_coluna(
+            df,
+            [
+                "Data Hora",
+                "Data/Hora",
+                "DataHora",
+                "Data",
+                "Hora",
+            ]
+        )
+
+        col_ig = encontrar_coluna(
+            df,
+            [
+                "IG",
+                "Ig",
+                "Ignição",
+                "Ignicao",
+                "Ignicao Motor",
+            ]
+        )
+
+        col_vel = encontrar_coluna(
+            df,
+            [
+                "Vel (Km/h)",
+                "Vel(Km/h)",
+                "Velocidade",
+                "Vel",
+                "Km/h",
+            ]
+        )
+
+        col_end = encontrar_coluna(
+            df,
+            [
+                "Endereço",
+                "Endereco",
+                "Localização",
+                "Localizacao",
+                "Local",
+            ]
+        )
+
+        col_mot = encontrar_coluna(
+            df,
+            [
+                "Motorista",
+                "Condutor",
+                "Driver",
+            ]
+        )
+
+        col_lat = encontrar_coluna(
+            df,
+            [
+                "Latitude",
+                "Lat",
+            ]
+        )
+
+        col_lon = encontrar_coluna(
+            df,
+            [
+                "Longitude",
+                "Long",
+                "Lng",
+            ]
+        )
+
+        col_mun = encontrar_coluna(
+            df,
+            [
+                "Município",
+                "Municipio",
+            ]
+        )
+
+        if col_data is None:
+            continue
+
+        for _, row in df.iterrows():
+
+            data_hora = pd.to_datetime(
+                row.get(col_data),
+                dayfirst=True,
+                errors="coerce"
+            )
+
+            if pd.isna(data_hora):
+                continue
+
+            registros.append(
+                {
+                    "PLACA": placa,
+
+                    "ARQUIVO_ORIGEM":
+                        arquivo.name,
+
+                    "DATA_HORA":
+                        (
+                            data_hora.to_pydatetime()
+                            if isinstance(
+                                data_hora,
+                                pd.Timestamp
+                            )
+                            else data_hora
+                        ),
+
+                    "IG":
+                        normalizar_texto(
+                            row.get(
+                                col_ig,
+                                ""
+                            )
+                        ),
+
+                    "VELOCIDADE":
+                        converter_float(
+                            row.get(
+                                col_vel,
+                                0
+                            )
+                        ),
+
+                    "MOTORISTA":
+                        str(
+                            row.get(
+                                col_mot,
+                                ""
+                            )
+                            or ""
+                        ).strip(),
+
+                    "MOTORISTA_NORMALIZADO":
+                        limpar_motorista(
+                            row.get(
+                                col_mot,
+                                ""
+                            )
+                        ),
+
+                    "ENDERECO":
+                        str(
+                            row.get(
+                                col_end,
+                                ""
+                            )
+                            or ""
+                        ).strip(),
+
+                    "MUNICIPIO":
+                        str(
+                            row.get(
+                                col_mun,
+                                ""
+                            )
+                            or ""
+                        ).strip(),
+
+                    "LATITUDE":
+                        converter_float(
+                            row.get(
+                                col_lat,
+                                0
+                            )
+                        ),
+
+                    "LONGITUDE":
+                        converter_float(
+                            row.get(
+                                col_lon,
+                                0
+                            )
+                        ),
+                }
+            )
+
+    if not registros:
+        return pd.DataFrame()
+
+    return (
+        pd.DataFrame(registros)
+        .drop_duplicates()
+        .sort_values(
+            [
+                "PLACA",
+                "DATA_HORA"
+            ]
+        )
+        .reset_index(drop=True)
+    )
+
+
+# ============================================================
+# FONTE DE ABASTECIMENTO
+# ============================================================
+
+def carregar_fonte_abastecimento(
+    inicio,
+    fim
+):
+
+    print(
+        "\n" + "-" * 70
+    )
+
+    print(
+        "CARREGANDO FONTE DE ABASTECIMENTO - GOOGLE SHEETS"
+    )
+
+    print(
+        "-" * 70
+    )
+
+    print(
+        f"URL: {URL_ABASTECIMENTO}"
+    )
+
+    try:
+
+        resposta = requests.get(
+            URL_ABASTECIMENTO,
+            timeout=60,
+            headers={
+                "User-Agent":
+                    "Mozilla/5.0 COMPESA-AuditoriaFrota/1.0"
+            },
+        )
+
+        resposta.raise_for_status()
+
+        conteudo = resposta.content
+
+        try:
+
+            texto = conteudo.decode(
+                "utf-8-sig"
+            )
+
+        except UnicodeDecodeError:
+
+            texto = conteudo.decode(
+                "latin-1",
+                errors="replace"
+            )
+
+        from io import StringIO
+
+        try:
+
+            df = pd.read_csv(
+                StringIO(texto),
+                sep=None,
+                engine="python",
+                dtype=object
+            )
+
+        except Exception:
+
+            df = pd.read_csv(
+                StringIO(texto),
+                sep=",",
+                dtype=object
+            )
+
+        if df.empty:
+
+            print(
+                "⚠ A fonte de abastecimento retornou 0 registros."
+            )
+
+            return pd.DataFrame()
+
+        df.columns = [
+            str(c).strip()
+            for c in df.columns
+        ]
+
+        print(
+            f"✓ Registros recebidos da fonte: {len(df)}"
+        )
+
+        print(
+            "✓ Colunas:",
+            ", ".join(
+                map(
+                    str,
+                    df.columns.tolist()
+                )
+            )
+        )
+
+        placa_col = encontrar_coluna(
+            df,
+            [
+                "PLACA",
+                "Placa",
+                "PLACA VEICULO",
+                "PLACA VEÍCULO",
+            ]
+        )
+
+        data_col = encontrar_coluna(
+            df,
+            [
+                "DATA TRANSACAO",
+                "DATA TRANSAÇÃO",
+                "DATA",
+                "DATA ABASTECIMENTO",
+                "DATA ABAST.",
+                "DATA/HORA",
+                "DATA HORA",
+            ]
+        )
+
+        if not placa_col or not data_col:
+
+            print(
+                "❌ A fonte de abastecimento não possui PLACA e/ou DATA TRANSACAO."
+            )
+
+            print(
+                "PLACA encontrada:",
+                placa_col
+            )
+
+            print(
+                "DATA encontrada:",
+                data_col
+            )
+
+            return pd.DataFrame()
+
+        df[
+            "PLACA_NORMALIZADA"
+        ] = df[
+            placa_col
+        ].map(
+            normalizar_placa
+        )
+
+        df[
+            "DATA_ABAST"
+        ] = pd.to_datetime(
+            df[data_col],
+            dayfirst=True,
+            errors="coerce"
+        )
+
+        inicio_ts = pd.Timestamp(
+            inicio
+        )
+
+        fim_ts = pd.Timestamp(
+            fim
+        )
+
+        if (
+            fim_ts.hour == 0
+            and fim_ts.minute == 0
+            and fim_ts.second == 0
+        ):
+
+            fim_ts = (
+                fim_ts
+                + pd.Timedelta(days=1)
+                - pd.Timedelta(seconds=1)
+            )
+
+        antes = len(df)
+
+        df = df[
+            (df["PLACA_NORMALIZADA"] != "")
+            &
+            (df["DATA_ABAST"].notna())
+            &
+            (df["DATA_ABAST"] >= inicio_ts)
+            &
+            (df["DATA_ABAST"] <= fim_ts)
+        ].copy()
+
+        placas_validas = {
+            normalizar_placa(p)
+            for p in PLACAS
+            if normalizar_placa(p)
+        }
+
+        if placas_validas:
+
+            df = df[
+                df[
+                    "PLACA_NORMALIZADA"
+                ].isin(
+                    placas_validas
+                )
+            ].copy()
+
+        df[
+            "__ARQUIVO_ABAST"
+        ] = (
+            "Google Sheets - URL_ABASTECIMENTO"
+        )
+
+        df[
+            "__ABA_ABAST"
+        ] = "CSV publicado"
+
+        print(
+            f"✓ Registros após filtro de período/placa: "
+            f"{len(df)} de {antes}"
+        )
+
+        if not df.empty:
+
+            print(
+                f"✓ Primeiro abastecimento: "
+                f"{df['DATA_ABAST'].min()}"
+            )
+
+            print(
+                f"✓ Último abastecimento:   "
+                f"{df['DATA_ABAST'].max()}"
+            )
+
+        else:
+
+            print(
+                "⚠ Nenhum abastecimento encontrado para o período/placas."
+            )
+
+        return df.reset_index(
+            drop=True
+        )
+
+    except Exception as erro:
+
+        print(
+            f"❌ ERRO AO CARREGAR FONTE DE ABASTECIMENTO: {erro}"
+        )
+
+        print(
+            "   O processamento da telemetria continuará, "
+            "mas os desvios de abastecimento não serão calculados."
+        )
+
+        return pd.DataFrame()
+
+
+def extrair_dados_abastecimento(
+    row
+):
+
+    def valor(cols):
+
+        c = encontrar_coluna(
+            pd.DataFrame([row]),
+            cols
+        )
+
+        return (
+            row.get(c, "")
+            if c
+            else ""
+        )
+
+    motorista = valor(
+        [
+            "NOME MOTORISTA",
+            "MOTORISTA",
+            "CONDUTOR",
+            "NOME DO MOTORISTA",
+            "NOME CONDUTOR",
+        ]
+    )
+
+    endereco = valor(
+        [
+            "ENDERECO",
+            "ENDEREÇO",
+            "ENDEREÇO POSTO",
+            "LOCALIZAÇÃO",
+            "LOCALIZACAO",
+        ]
+    )
+
+    bairro = valor(
+        ["BAIRRO"]
+    )
+
+    cidade = valor(
+        [
+            "CIDADE",
+            "MUNICIPIO",
+            "MUNICÍPIO",
+        ]
+    )
+
+    posto = valor(
+        [
+            "NOME POSTO",
+            "POSTO",
+            "NOME ESTABELECIMENTO",
+            "ESTABELECIMENTO",
+        ]
+    )
+
+    lat = converter_float(
+        valor(
+            [
+                "LATITUDE",
+                "LAT",
+            ]
+        )
+    )
+
+    lon = converter_float(
+        valor(
+            [
+                "LONGITUDE",
+                "LONG",
+                "LNG",
+            ]
+        )
+    )
+
+    partes = [
+        str(endereco or "").strip(),
+        str(bairro or "").strip(),
+        str(cidade or "").strip(),
+    ]
+
+    partes = [
+        x
+        for x in partes
+        if (
+            x
+            and normalizar_texto(x)
+            not in {
+                "N/A",
+                "NULL",
+                "NAN",
+                "-",
+            }
+        )
+    ]
+
+    return {
+        "PLACA":
+            normalizar_placa(
+                row.get(
+                    "PLACA_NORMALIZADA",
+                    row.get(
+                        "PLACA",
+                        ""
+                    )
+                )
+            ),
+
+        "DATA_ABAST":
+            row.get(
+                "DATA_ABAST"
+            ),
+
+        "MOTORISTA_ABAST":
+            str(
+                motorista or ""
+            ).strip(),
+
+        "MOTORISTA_ABAST_NORMALIZADO":
+            limpar_motorista(
+                motorista
+            ),
+
+        "ENDERECO_ABAST":
+            ", ".join(partes),
+
+        "POSTO_ABAST":
+            str(
+                posto or ""
+            ).strip(),
+
+        "LATITUDE_ABAST":
+            lat,
+
+        "LONGITUDE_ABAST":
+            lon,
+
+        "ARQUIVO_FONTE_ABAST":
+            row.get(
+                "__ARQUIVO_ABAST",
+                ""
+            ),
+
+        "ABA_FONTE_ABAST":
+            row.get(
+                "__ABA_ABAST",
+                ""
+            ),
+    }
+
+
+# ============================================================
+# GEOCODIFICAÇÃO
+# ============================================================
+
+def geocodificar_endereco(
+    endereco
+):
+
+    if not endereco:
+        return None
+
+    chave = (
+        "addr",
+        normalizar_texto(
+            endereco
+        )
+    )
+
+    if chave in _CACHE_LOCAIS:
+        return _CACHE_LOCAIS[chave]
+
+    global _ULTIMA_CONSULTA_OSM
+
+    espera = (
+        OSM_MIN_INTERVAL_S
+        - (
+            time.time()
+            - _ULTIMA_CONSULTA_OSM
+        )
+    )
+
+    if espera > 0:
+        time.sleep(espera)
+
+    try:
+
+        resp = requests.get(
+            "https://nominatim.openstreetmap.org/search",
+            params={
+                "q": endereco,
+                "format": "jsonv2",
+                "limit": 1,
+                "countrycodes": "br",
+            },
+            headers={
+                "User-Agent":
+                    NOMINATIM_USER_AGENT
+            },
+            timeout=20,
+        )
+
+        resp.raise_for_status()
+
+        _ULTIMA_CONSULTA_OSM = time.time()
+
+        dados = resp.json()
+
+        if dados:
+
+            coords = (
+                float(
+                    dados[0]["lat"]
+                ),
+                float(
+                    dados[0]["lon"]
+                )
+            )
+
+            _CACHE_LOCAIS[
+                chave
+            ] = coords
+
+            return coords
+
+    except Exception as erro:
+
+        print(
+            f"⚠ Geocodificação indisponível para "
+            f"'{endereco}': {erro}"
+        )
+
+    _CACHE_LOCAIS[
+        chave
+    ] = None
+
+    return None
+
+
+# ============================================================
+# CRUZAMENTO ABASTECIMENTO X TELEMETRIA
+# ============================================================
+
+def cruzar_abastecimento_telemetria(
+    telemetria,
+    abastecimento
+):
+
+    if (
+        telemetria.empty
+        or abastecimento.empty
+    ):
+        return pd.DataFrame()
+
+    eventos = []
+
+    for _, fuelrow in abastecimento.iterrows():
+
+        f = extrair_dados_abastecimento(
+            fuelrow
+        )
+
+        placa = f["PLACA"]
+
+        data_abast = pd.to_datetime(
+            f["DATA_ABAST"],
+            errors="coerce"
+        )
+
+        if (
+            not placa
+            or pd.isna(data_abast)
+        ):
+            continue
+
+        candidatos = telemetria[
+            telemetria["PLACA"]
+            == placa
+        ].copy()
+
+        if candidatos.empty:
+            continue
+
+        candidatos[
+            "DATA_HORA"
+        ] = pd.to_datetime(
+            candidatos["DATA_HORA"],
+            errors="coerce"
+        )
+
+        candidatos = candidatos[
+            candidatos["DATA_HORA"].notna()
+        ].copy()
+
+        candidatos = candidatos[
+            candidatos[
+                "DATA_HORA"
+            ].dt.date
+            == data_abast.date()
+        ].copy()
+
+        if candidatos.empty:
+            continue
+
+        candidatos[
+            "DIF_MIN"
+        ] = (
+            candidatos["DATA_HORA"]
+            - data_abast
+        ).abs().dt.total_seconds() / 60.0
+
+        candidatos = candidatos[
+            candidatos["DIF_MIN"]
+            <= TOLERANCIA_ABASTECIMENTO_MIN
+        ].sort_values(
+            "DIF_MIN"
+        )
+
+        if candidatos.empty:
+            continue
+
+        t = candidatos.iloc[0]
+
+        dif = float(
+            t["DIF_MIN"]
+        )
+
+        motorista_abast = (
+            f["MOTORISTA_ABAST"]
+        )
+
+        motorista_t = str(
+            t.get(
+                "MOTORISTA",
+                ""
+            )
+            or ""
+        ).strip()
+
+        motorista_abast_norm = (
+            f[
+                "MOTORISTA_ABAST_NORMALIZADO"
+            ]
+        )
+
+        motorista_t_norm = (
+            limpar_motorista(
+                motorista_t
+            )
+        )
+
+        endereco_abast = (
+            f["ENDERECO_ABAST"]
+        )
+
+        endereco_t = str(
+            t.get(
+                "ENDERECO",
+                ""
+            )
+            or ""
+        ).strip()
+
+        base = {
+            **f,
+
+            "DATA_HORA_TELEMETRIA":
+                t["DATA_HORA"],
+
+            "DIF_MIN":
+                round(
+                    dif,
+                    2
+                ),
+
+            "Motorista abastecimento":
+                motorista_abast,
+
+            "Motoristas Telemetria":
+                motorista_t,
+
+            "ENDERECO_TELEMETRIA":
+                endereco_t,
+        }
+
+        # --------------------------------------------------------
+        # MOTORISTA NÃO IDENTIFICADO
+        # --------------------------------------------------------
+
+        if not motorista_t_norm:
+
+            eventos.append(
+                {
+                    **base,
+
+                    "TIPO_DESVIO":
+                        "Motorista não identificado",
+
+                    "CRITICIDADE":
+                        "MEDIA",
+
+                    "DETALHE":
+                        (
+                            f"Motorista abastecimento: "
+                            f"{motorista_abast or 'NÃO INFORMADO'} | "
+                            f"Motoristas Telemetria: "
+                            f"NÃO INFORMADO | "
+                            f"Data/hora: "
+                            f"{data_abast.strftime('%d/%m/%Y %H:%M:%S')} | "
+                            f"Diferença: "
+                            f"{dif:.2f} min"
+                        ),
+                }
+            )
+
+        # --------------------------------------------------------
+        # MOTORISTA DIFERENTE
+        # --------------------------------------------------------
+
+        elif (
+            motorista_abast_norm
+            and motorista_t_norm
+            and motorista_abast_norm
+            != motorista_t_norm
+        ):
+
+            eventos.append(
+                {
+                    **base,
+
+                    "TIPO_DESVIO":
+                        "MOTORISTA DIFERENTE",
+
+                    "CRITICIDADE":
+                        "ALTA",
+
+                    "DETALHE":
+                        (
+                            f"Motorista abastecimento: "
+                            f"{motorista_abast} | "
+                            f"Motoristas Telemetria: "
+                            f"{motorista_t} | "
+                            f"Data/hora: "
+                            f"{data_abast.strftime('%d/%m/%Y %H:%M:%S')} | "
+                            f"Diferença: "
+                            f"{dif:.2f} min"
+                        ),
+                }
+            )
+
+        # --------------------------------------------------------
+        # ENDEREÇO DIVERGENTE
+        # --------------------------------------------------------
+
+        endereco_div = False
+        distancia_end = None
+
+        latf = f[
+            "LATITUDE_ABAST"
+        ]
+
+        lonf = f[
+            "LONGITUDE_ABAST"
+        ]
+
+        latt = converter_float(
+            t.get(
+                "LATITUDE",
+                0
+            )
+        )
+
+        lont = converter_float(
+            t.get(
+                "LONGITUDE",
+                0
+            )
+        )
+
+        if (
+            not (latf and lonf)
+            and endereco_abast
+        ):
+
+            geo = geocodificar_endereco(
+                endereco_abast
+            )
+
+            if geo:
+                latf, lonf = geo
+
+        if (
+            not (latt and lont)
+            and endereco_t
+        ):
+
+            geo = geocodificar_endereco(
+                endereco_t
+            )
+
+            if geo:
+                latt, lont = geo
+
+        if (
+            latf
+            and lonf
+            and latt
+            and lont
+        ):
+
+            distancia_end = (
+                distancia_metros(
+                    latf,
+                    lonf,
+                    latt,
+                    lont
+                )
+            )
+
+            endereco_div = (
+                distancia_end
+                > RAIO_DIVERGENCIA_ENDERECO_METROS
+            )
+
+        else:
+
+            endereco_div = not enderecos_compativeis(
+                endereco_abast,
+                endereco_t
+            )
+
+        if endereco_div:
+
+            detalhe = (
+                f"Abastecimento: "
+                f"{endereco_abast or f['POSTO_ABAST'] or 'NÃO INFORMADO'} | "
+                f"Telemetria: "
+                f"{endereco_t or 'NÃO INFORMADO'} | "
+                f"Data/hora: "
+                f"{data_abast.strftime('%d/%m/%Y %H:%M:%S')} | "
+                f"Diferença: "
+                f"{dif:.2f} min"
+            )
+
+            if distancia_end is not None:
+
+                detalhe += (
+                    f" | Distância: "
+                    f"{distancia_end:.1f} m"
+                )
+
+            eventos.append(
+                {
+                    **base,
+
+                    "TIPO_DESVIO":
+                        "ENDEREÇO DIVERGENTE",
+
+                    "CRITICIDADE":
+                        (
+                            "ALTA"
+                            if (
+                                distancia_end
+                                is not None
+                                and distancia_end > 500
+                            )
+                            else "MEDIA"
+                        ),
+
+                    "DISTANCIA_ENDERECOS_M":
+                        (
+                            round(
+                                distancia_end,
+                                1
+                            )
+                            if distancia_end
+                            is not None
+                            else None
+                        ),
+
+                    "DETALHE":
+                        detalhe,
+                }
+            )
+
+        # --------------------------------------------------------
+        # MOTOR LIGADO NO ABASTECIMENTO
+        # --------------------------------------------------------
+
+        if (
+            dif
+            <= TOLERANCIA_IGNICAO_ABASTECIMENTO_MIN
+            and motor_ligado_parado(t)
+        ):
+
+            eventos.append(
+                {
+                    **base,
+
+                    "TIPO_DESVIO":
+                        "MOTOR LIGADO NO ABASTECIMENTO",
+
+                    "CRITICIDADE":
+                        "ALTA",
+
+                    "DETALHE":
+                        (
+                            "IG = L e Vel (Km/h) = 0,0 "
+                            "no registro de telemetria "
+                            "correspondente ao abastecimento. "
+                            f"Diferença: {dif:.2f} min."
+                        ),
+                }
+            )
+
+    if not eventos:
+        return pd.DataFrame()
+
+    return pd.DataFrame(
+        eventos
+    )
+
+
+def identificar_desvios_local(
+    df
+):
+
+    """
+    Mantida por compatibilidade.
+
+    Os desvios de motorista/endereço/motor ligado
+    são gerados somente no cruzamento abastecimento
+    x telemetria.
+    """
+
+    return pd.DataFrame()
+
+
+def motor_ligado_parado(
+    row
+):
+
+    return (
+        normalizar_texto(
+            row["IG"]
+        ) == "L"
+        and
+        abs(
+            float(
+                row["VELOCIDADE"]
+            )
+        ) < 0.01
+    )
+
+
+def distancia_metros(
+    lat1,
+    lon1,
+    lat2,
+    lon2
+):
+
+    raio = 6371000.0
+
+    p1 = math.radians(
+        float(lat1)
+    )
+
+    p2 = math.radians(
+        float(lat2)
+    )
+
+    dp = math.radians(
+        float(lat2)
+        - float(lat1)
+    )
+
+    dl = math.radians(
+        float(lon2)
+        - float(lon1)
+    )
+
+    a = (
+        math.sin(dp / 2) ** 2
+        +
+        math.cos(p1)
+        * math.cos(p2)
+        * math.sin(dl / 2) ** 2
+    )
+
+    return (
+        raio
+        * 2
+        * math.atan2(
+            math.sqrt(a),
+            math.sqrt(1 - a)
+        )
+    )
+
+
+# ============================================================
+# PARADAS COM MOTOR LIGADO
+# ============================================================
+
+def identificar_paradas_motor_ligado(
+    df
+):
+
+    eventos = []
+
+    if df.empty:
+        return pd.DataFrame()
+
+    for placa, grupo in df.groupby(
+        "PLACA",
+        sort=False
+    ):
+
+        grupo = (
+            grupo
+            .sort_values("DATA_HORA")
+            .reset_index(drop=True)
+        )
+
+        inicio = None
+        ultimo = None
+
+        for i, row in grupo.iterrows():
+
+            valido = motor_ligado_parado(
+                row
+            )
+
+            if valido:
+
+                if inicio is None:
+
+                    inicio = i
+                    ultimo = i
+
+                    continue
+
+                anterior = grupo.iloc[
+                    ultimo
+                ]
+
+                delta = (
+                    row["DATA_HORA"]
+                    - anterior["DATA_HORA"]
+                ).total_seconds() / 60.0
+
+                mesma_posicao = True
+
+                if (
+                    all(
+                        float(
+                            anterior.get(
+                                c,
+                                0
+                            )
+                        ) != 0
+                        for c in [
+                            "LATITUDE",
+                            "LONGITUDE"
+                        ]
+                    )
+                    and
+                    all(
+                        float(
+                            row.get(
+                                c,
+                                0
+                            )
+                        ) != 0
+                        for c in [
+                            "LATITUDE",
+                            "LONGITUDE"
+                        ]
+                    )
+                ):
+
+                    mesma_posicao = (
+                        distancia_metros(
+                            anterior["LATITUDE"],
+                            anterior["LONGITUDE"],
+                            row["LATITUDE"],
+                            row["LONGITUDE"]
+                        )
+                        <= RAIO_PARADA_METROS
+                    )
+
+                if (
+                    delta
+                    <= GAP_MAX_MINUTOS
+                    and mesma_posicao
+                ):
+
+                    ultimo = i
+
+                else:
+
+                    evento = montar_parada(
+                        grupo,
+                        inicio,
+                        ultimo
+                    )
+
+                    if evento:
+                        eventos.append(
+                            evento
+                        )
+
+                    inicio = i
+                    ultimo = i
+
+            elif inicio is not None:
+
+                evento = montar_parada(
+                    grupo,
+                    inicio,
+                    ultimo
+                )
+
+                if evento:
+                    eventos.append(
+                        evento
+                    )
+
+                inicio = None
+                ultimo = None
+
+        if inicio is not None:
+
+            evento = montar_parada(
+                grupo,
+                inicio,
+                ultimo
+            )
+
+            if evento:
+                eventos.append(
+                    evento
+                )
+
+    return pd.DataFrame(
+        eventos
+    )
+
+
+def montar_parada(
+    grupo,
+    inicio,
+    fim
+):
+
+    primeiro = grupo.iloc[
+        inicio
+    ]
+
+    ultimo = grupo.iloc[
+        fim
+    ]
+
+    minutos = (
+        ultimo["DATA_HORA"]
+        - primeiro["DATA_HORA"]
+    ).total_seconds() / 60.0
+
+    if minutos < TEMPO_MINIMO_PARADA:
+        return None
+
+    return {
+        "PLACA":
+            primeiro["PLACA"],
+
+        "ARQUIVO_ORIGEM":
+            primeiro["ARQUIVO_ORIGEM"],
+
+        "INICIO":
+            primeiro["DATA_HORA"],
+
+        "FIM":
+            ultimo["DATA_HORA"],
+
+        "DURACAO_MINUTOS":
+            round(
+                minutos,
+                1
+            ),
+
+        "MOTORISTA":
+            primeiro["MOTORISTA"],
+
+        "ENDERECO":
+            (
+                primeiro["ENDERECO"]
+                or ultimo["ENDERECO"]
+            ),
+
+        "MUNICIPIO":
+            primeiro["MUNICIPIO"],
+
+        "LATITUDE":
+            primeiro["LATITUDE"],
+
+        "LONGITUDE":
+            primeiro["LONGITUDE"],
+
+        "TIPO_DESVIO":
+            "MOTOR LIGADO - VEÍCULO PARADO",
+
+        "LOCAL_TIPO":
+            "",
+
+        "LOCAL_NOME":
+            "",
+
+        "DISTANCIA_LOCAL_M":
+            pd.NA,
+
+        "CRITICIDADE":
+            "",
+
+        "DETALHE":
+            "",
+    }
+
+
+# ============================================================
+# LOCAL / OSM
+# ============================================================
+
+def classificar_tipo_local(
+    tags
+):
+
+    for chave in OSM_TAG_KEYS:
+
+        if chave not in tags:
+            continue
+
+        valor = str(
+            tags.get(
+                chave,
+                ""
+            )
+        ).strip().lower()
+
+        nivel = OSM_CRITICIDADE_MAP.get(
+            (
+                chave,
+                valor
+            )
+        )
+
+        if nivel:
+
+            return (
+                nivel,
+                f"{chave}: {valor}"
+            )
+
+    return (
+        "C",
+        "Outro"
+    )
+
+
+def consultar_osm_proximo(
+    lat,
+    lon
+):
+
+    global _ULTIMA_CONSULTA_OSM
+
+    query = f"""
+    [out:json][timeout:25];
+    (
+      nwr(around:{RAIO_BUSCA_POI_METROS},{lat},{lon})[amenity];
+      nwr(around:{RAIO_BUSCA_POI_METROS},{lat},{lon})[shop];
+      nwr(around:{RAIO_BUSCA_POI_METROS},{lat},{lon})[tourism];
+      nwr(around:{RAIO_BUSCA_POI_METROS},{lat},{lon})[leisure];
+      nwr(around:{RAIO_BUSCA_POI_METROS},{lat},{lon})[natural];
+      nwr(around:{RAIO_BUSCA_POI_METROS},{lat},{lon})[aeroway];
+    );
+    out center tags;
+    """
+
+    ultimo_erro = None
+
+    for endpoint in OVERPASS_URLS:
+
+        try:
+
+            agora = time.time()
+
+            espera = (
+                OSM_MIN_INTERVAL_S
+                - (
+                    agora
+                    - _ULTIMA_CONSULTA_OSM
+                )
+            )
+
+            if espera > 0:
+                time.sleep(espera)
+
+            resposta = requests.post(
+                endpoint,
+                data=query,
+                headers={
+                    "User-Agent":
+                        NOMINATIM_USER_AGENT
+                },
+                timeout=40,
+            )
+
+            resposta.raise_for_status()
+
+            _ULTIMA_CONSULTA_OSM = (
+                time.time()
+            )
+
+            locais = []
+
+            for item in resposta.json().get(
+                "elements",
+                []
+            ):
+
+                tags = item.get(
+                    "tags",
+                    {}
+                )
+
+                criticidade, categoria = (
+                    classificar_tipo_local(
+                        tags
+                    )
+                )
+
+                centro = item.get(
+                    "center",
+                    {}
+                )
+
+                lat2 = item.get(
+                    "lat",
+                    centro.get(
+                        "lat",
+                        0
+                    )
+                )
+
+                lon2 = item.get(
+                    "lon",
+                    centro.get(
+                        "lon",
+                        0
+                    )
+                )
+
+                if not lat2 or not lon2:
+                    continue
+
+                locais.append(
+                    {
+                        "nome":
+                            tags.get(
+                                "name",
+                                ""
+                            ),
+
+                        "categoria":
+                            categoria,
+
+                        "criticidade":
+                            criticidade,
+
+                        "lat":
+                            lat2,
+
+                        "lon":
+                            lon2,
+                    }
+                )
+
+            return locais
+
+        except Exception as erro:
+
+            ultimo_erro = erro
+            continue
+
+    print(
+        "⚠ Nenhum servidor Overpass respondeu. "
+        f"Análise continuará sem POI. "
+        f"Último erro: {ultimo_erro}"
+    )
+
+    return []
+
+
+# ============================================================
+# GOOGLE PLACES
+# ============================================================
+
+def consultar_google_places(
+    lat,
+    lon
+):
+
+    if not GOOGLE_PLACES_API_KEY:
+        return []
+
+    url = (
+        "https://places.googleapis.com/v1/places:searchNearby"
+    )
+
+    headers = {
+        "Content-Type":
+            "application/json",
+
+        "X-Goog-Api-Key":
+            GOOGLE_PLACES_API_KEY,
+
+        "X-Goog-FieldMask":
+            (
+                "places.displayName,"
+                "places.primaryType,"
+                "places.location,"
+                "places.types"
+            ),
+    }
+
+    payload = {
+        "includedTypes": [
+            "bar",
+            "night_club",
+            "restaurant",
+            "hospital",
+            "shopping_mall",
+            "supermarket",
+            "lodging",
+            "cafe",
+            "clinic",
+            "gym",
+            "school",
+            "gas_station",
+            "parking_lot",
+            "convenience_store",
+            "department_store",
+        ],
+
+        "maxResultCount": 10,
+
+        "locationRestriction": {
+            "circle": {
+                "center": {
+                    "latitude":
+                        lat,
+
+                    "longitude":
+                        lon,
+                },
+
+                "radius":
+                    RAIO_BUSCA_POI_METROS,
+            }
+        },
+    }
+
+    try:
+
+        resposta = requests.post(
+            url,
+            headers=headers,
+            json=payload,
+            timeout=20,
+        )
+
+        resposta.raise_for_status()
+
+        locais = []
+
+        for item in resposta.json().get(
+            "places",
+            []
+        ):
+
+            tipo = item.get(
+                "primaryType",
+                ""
+            )
+
+            nivel = CRITICIDADE_MAP.get(
+                tipo,
+                "C"
+            )
+
+            nomes = {
+                "bar":
+                    "Bar",
+
+                "night_club":
+                    "Vida noturna",
+
+                "lodging":
+                    "Hospedagem",
+
+                "shopping_mall":
+                    "Shopping",
+
+                "hospital":
+                    "Hospital",
+
+                "restaurant":
+                    "Restaurante",
+
+                "supermarket":
+                    "Supermercado",
+
+                "cafe":
+                    "Café",
+
+                "gym":
+                    "Academia",
+
+                "school":
+                    "Escola",
+
+                "doctor":
+                    "Atendimento médico",
+
+                "gas_station":
+                    "Posto",
+
+                "parking":
+                    "Estacionamento",
+            }
+
+            criticidade = nivel
+
+            categoria = nomes.get(
+                tipo,
+                tipo.replace(
+                    "_",
+                    " "
+                ).title()
+            )
+
+            loc = item.get(
+                "location",
+                {}
+            )
+
+            locais.append(
+                {
+                    "nome":
+                        item.get(
+                            "displayName",
+                            {}
+                        ).get(
+                            "text",
+                            ""
+                        ),
+
+                    "categoria":
+                        categoria,
+
+                    "criticidade":
+                        criticidade,
+
+                    "lat":
+                        loc.get(
+                            "latitude",
+                            0
+                        ),
+
+                    "lon":
+                        loc.get(
+                            "longitude",
+                            0
+                        ),
+                }
+            )
+
+        return locais
+
+    except Exception as erro:
+
+        print(
+            f"⚠ Google Places indisponível: {erro}"
+        )
+
+        return []
+
+
+# ============================================================
+# VALIDAR LOCAL DAS PARADAS
+# ============================================================
+
+def validar_local_paradas(
+    df
+):
+
+    if df.empty:
+        return df
+
+    resultado = df.copy()
+
+    resultado[
+        "DISTANCIA_LOCAL_M"
+    ] = pd.to_numeric(
+        resultado[
+            "DISTANCIA_LOCAL_M"
+        ],
+        errors="coerce"
+    ).astype("Float64")
+
+    peso = CRITICIDADE_PESO
+
+    for idx, row in resultado.iterrows():
+
+        lat = converter_float(
+            row.get(
+                "LATITUDE",
+                0
+            )
+        )
+
+        lon = converter_float(
+            row.get(
+                "LONGITUDE",
+                0
+            )
+        )
+
+        duracao = converter_float(
+            row.get(
+                "DURACAO_MINUTOS",
+                0
+            )
+        )
+
+        melhor = None
+
+        if lat and lon:
+
+            chave = (
+                round(lat, 4),
+                round(lon, 4)
+            )
+
+            if chave not in _CACHE_LOCAIS:
+
+                locais = []
+
+                if GOOGLE_PLACES_API_KEY:
+
+                    print(
+                        "🔎 Google Places API: "
+                        "consultando primeiro..."
+                    )
+
+                    locais = (
+                        consultar_google_places(
+                            lat,
+                            lon
+                        )
+                    )
+
+                if not locais:
+
+                    print(
+                        "⚠ Google Places sem "
+                        "resultado/disponível. "
+                        "Usando OSM/Overpass "
+                        "como fallback..."
+                    )
+
+                    locais = (
+                        consultar_osm_proximo(
+                            lat,
+                            lon
+                        )
+                    )
+
+                _CACHE_LOCAIS[
+                    chave
+                ] = locais
+
+            else:
+
+                locais = _CACHE_LOCAIS[
+                    chave
+                ]
+
+            for local in locais:
+
+                distancia = distancia_metros(
+                    lat,
+                    lon,
+                    local["lat"],
+                    local["lon"]
+                )
+
+                candidato = {
+                    **local,
+                    "distancia":
+                        round(
+                            distancia,
+                            1
+                        )
+                }
+
+                if (
+                    distancia
+                    > RAIO_BUSCA_POI_METROS
+                ):
+                    continue
+
+                if (
+                    melhor is None
+                    or
+                    peso[
+                        candidato[
+                            "criticidade"
+                        ]
+                    ]
+                    >
+                    peso[
+                        melhor[
+                            "criticidade"
+                        ]
+                    ]
+                    or
+                    (
+                        peso[
+                            candidato[
+                                "criticidade"
+                            ]
+                        ]
+                        ==
+                        peso[
+                            melhor[
+                                "criticidade"
+                            ]
+                        ]
+                        and
+                        distancia
+                        <
+                        melhor[
+                            "distancia"
+                        ]
+                    )
+                ):
+
+                    melhor = candidato
+
+        if melhor:
+
+            criticidade = (
+                melhor[
+                    "criticidade"
+                ]
+            )
+
+            resultado.at[
+                idx,
+                "LOCAL_TIPO"
+            ] = melhor[
+                "categoria"
+            ]
+
+            resultado.at[
+                idx,
+                "LOCAL_NOME"
+            ] = melhor[
+                "nome"
+            ]
+
+            resultado.at[
+                idx,
+                "DISTANCIA_LOCAL_M"
+            ] = float(
+                melhor[
+                    "distancia"
+                ]
+            )
+
+            resultado.at[
+                idx,
+                "CRITICIDADE"
+            ] = criticidade
+
+            resultado.at[
+                idx,
+                "DETALHE"
+            ] = (
+                f"Motor ligado e velocidade "
+                f"0,0 km/h por {duracao:.1f} min; "
+                f"local próximo: "
+                f"{melhor['nome'] or 'sem nome'} "
+                f"({melhor['categoria']}), "
+                f"{melhor['distancia']:.0f} m."
+            )
+
+        else:
+
+            resultado.at[
+                idx,
+                "CRITICIDADE"
+            ] = "C"
+
+            resultado.at[
+                idx,
+                "DETALHE"
+            ] = (
+                f"Motor ligado e velocidade "
+                f"0,0 km/h por {duracao:.1f} min; "
+                f"nenhum estabelecimento "
+                f"classificado encontrado em "
+                f"{RAIO_BUSCA_POI_METROS} m."
+            )
+
+    return resultado
+
+
+# ============================================================
+# ANALISAR RELATÓRIOS SALVOS
+# ============================================================
+
+def analisar_relatorios_salvos(
+    arquivos_html,
+    inicio=None,
+    fim=None
+):
+
+    dados = []
+
+    for arquivo in arquivos_html:
+
+        df = ler_html_telemetria(
+            arquivo
+        )
+
+        if not df.empty:
+            dados.append(df)
+
+    if not dados:
+
+        return (
+            pd.DataFrame(),
+            pd.DataFrame(),
+            pd.DataFrame(),
+            pd.DataFrame()
+        )
+
+    telemetria = pd.concat(
+        dados,
+        ignore_index=True,
+        sort=False
+    )
+
+    telemetria = (
+        telemetria
+        .drop_duplicates()
+        .sort_values(
+            [
+                "PLACA",
+                "DATA_HORA"
+            ]
+        )
+        .reset_index(drop=True)
+    )
+
+    desvios = pd.DataFrame()
+
+    paradas = (
+        identificar_paradas_motor_ligado(
+            telemetria
+        )
+    )
+
+    if not paradas.empty:
+
+        paradas = validar_local_paradas(
+            paradas
+        )
+
+    if (
+        inicio is not None
+        and fim is not None
+    ):
+
+        abastecimento = (
+            carregar_fonte_abastecimento(
+                inicio,
+                fim
+            )
+        )
+
+    else:
+
+        abastecimento = pd.DataFrame()
+
+    desvios_abast = (
+        cruzar_abastecimento_telemetria(
+            telemetria,
+            abastecimento
+        )
+    )
+
+    return (
+        telemetria,
+        desvios,
+        paradas,
+        desvios_abast
+    )
+
+
+# ============================================================
+# GERAR EXCEL DE AUDITORIA
+# ============================================================
+
+def gerar_excel_auditoria(
+    telemetria,
+    desvios,
+    paradas,
+    desvios_abast=None
+):
+
+    if desvios_abast is None:
+        desvios_abast = pd.DataFrame()
+
+    if not desvios_abast.empty:
+
+        desvios = pd.concat(
+            [
+                desvios,
+                desvios_abast
+            ],
+            ignore_index=True,
+            sort=False
+        )
+
+    resumo = []
+
+    if not desvios.empty:
+
+        for tipo, qtd in (
+            desvios[
+                "TIPO_DESVIO"
+            ].value_counts().items()
+        ):
+
+            resumo.append(
+                {
+                    "CATEGORIA":
+                        tipo,
+
+                    "QUANTIDADE":
+                        int(qtd),
+                }
+            )
+
+    if not paradas.empty:
+
+        for tipo, qtd in (
+            paradas[
+                "CRITICIDADE"
+            ].value_counts().items()
+        ):
+
+            resumo.append(
+                {
+                    "CATEGORIA":
+                        f"PARADA - {tipo}",
+
+                    "QUANTIDADE":
+                        int(qtd),
+                }
+            )
+
+    df_resumo = pd.DataFrame(
+        resumo,
+        columns=[
+            "CATEGORIA",
+            "QUANTIDADE"
+        ]
+    )
+
+    with pd.ExcelWriter(
+        ARQUIVO_AUDITORIA,
+        engine="openpyxl"
+    ) as writer:
+
+        telemetria.to_excel(
+            writer,
+            sheet_name="Telemetria",
+            index=False
+        )
+
+        desvios.to_excel(
+            writer,
+            sheet_name="Desvios",
+            index=False
+        )
+
+        if not desvios_abast.empty:
+
+            desvios_abast.to_excel(
+                writer,
+                sheet_name=
+                    "Abastecimento_x_Telemetria",
+                index=False
+            )
+
+        paradas.to_excel(
+            writer,
+            sheet_name=
+                "Paradas_Motor_Ligado",
+            index=False
+        )
+
+        df_resumo.to_excel(
+            writer,
+            sheet_name="Resumo",
+            index=False
+        )
+
+    wb = load_workbook(
+        ARQUIVO_AUDITORIA
+    )
+
+    for ws in wb.worksheets:
+
+        ws.freeze_panes = "A2"
+
+        if ws.max_row >= 1:
+
+            ws.auto_filter.ref = (
+                ws.dimensions
+            )
+
+        for cell in ws[1]:
+
+            cell.font = Font(
+                bold=True
+            )
+
+            cell.alignment = Alignment(
+                horizontal="center",
+                vertical="center"
+            )
+
+        for col in ws.columns:
+
+            maior = max(
+                10,
+                max(
+                    len(
+                        str(
+                            c.value
+                            or ""
+                        )
+                    )
+                    for c in col
+                ) + 2
+            )
+
+            ws.column_dimensions[
+                get_column_letter(
+                    col[0].column
+                )
+            ].width = min(
+                maior,
+                60
+            )
+
+    wb.save(
+        ARQUIVO_AUDITORIA
+    )
+
+    return ARQUIVO_AUDITORIA
+
+
+# ============================================================
+# EXECUTAR AUDITORIA
+# ============================================================
+
+def executar_auditoria(
+    arquivos_html,
+    inicio,
+    fim
+):
+
+    print(
+        "\n" + "=" * 70
+    )
+
+    print(
+        "AUDITORIA LOCAL - DESVIOS DE TELEMETRIA"
+    )
+
+    print(
+        "=" * 70
+    )
+
+    print(
+        f"Período: "
+        f"{inicio.strftime('%d/%m/%Y')} "
+        f"até "
+        f"{fim.strftime('%d/%m/%Y')}"
+    )
+
+    print(
+        f"HTMLs analisados: "
+        f"{len(arquivos_html)}"
+    )
+
+    print(
+        f"Fonte de abastecimento "
+        f"(CSV publicado): "
+        f"{URL_ABASTECIMENTO}"
+    )
+
+    print(
+        f"Planilha origem (edição): "
+        f"{URL_ABASTECIMENTO_EDIT}"
+    )
+
+    print(
+        "Regra de cruzamento: "
+        "mesma placa + mesmo dia + "
+        "diferença máxima de 3 minutos"
+    )
+
+    (
+        telemetria,
+        desvios,
+        paradas,
+        desvios_abast
+    ) = analisar_relatorios_salvos(
+        arquivos_html,
+        inicio,
+        fim
+    )
+
+    print(
+        f"✓ Fonte Google Sheets: "
+        f"{len(desvios_abast)} "
+        f"eventos de abastecimento x telemetria"
+    )
+
+    if telemetria.empty:
+
+        print(
+            "⚠ Nenhum registro de "
+            "telemetria foi extraído."
+        )
+
+        return None
+
+    arquivo = gerar_excel_auditoria(
+        telemetria,
+        desvios,
+        paradas,
+        desvios_abast
+    )
+
+    print(
+        f"✓ Registros: "
+        f"{len(telemetria)}"
+    )
+
+    print(
+        f"✓ Desvios: "
+        f"{len(desvios)}"
+    )
+
+    print(
+        f"✓ Paradas motor ligado: "
+        f"{len(paradas)}"
+    )
+
+    print(
+        f"✓ Desvios abastecimento "
+        f"x telemetria: "
+        f"{len(desvios_abast)}"
+    )
+
+    print(
+        f"✓ Excel: "
+        f"{arquivo.resolve()}"
+    )
+
+    return arquivo
+
+
+# ============================================================
+# LOGIN NEXUS
+# ============================================================
+
+def login_nexus(
+    driver
+):
+
+    print()
+
+    print(
+        "=" * 70
+    )
+
+    print(
+        "NEXUS FROTA BI"
+    )
+
+    print(
+        "=" * 70
+    )
+
+    driver.get(
+        URL_NEXUS
+    )
+
+    time.sleep(3)
+
+    wait = WebDriverWait(
+        driver,
+        TIMEOUT
+    )
+
+    try:
+
+        botao = wait.until(
+            EC.element_to_be_clickable(
+                (
+                    By.XPATH,
+                    "//button[contains("
+                    "normalize-space(.),"
+                    "'Acesso Restrito'"
+                    ")]"
+                )
+            )
+        )
+
+        driver.execute_script(
+            "arguments[0].click();",
+            botao
+        )
+
+        print(
+            "✓ Acesso Restrito."
+        )
+
+        time.sleep(2)
+
+    except TimeoutException:
+
+        pass
+
+    campo_email = None
+
+    try:
+
+        campo_email = wait.until(
+            EC.visibility_of_element_located(
+                (
+                    By.CSS_SELECTOR,
+                    "input[type='email']"
+                )
+            )
+        )
+
+    except TimeoutException:
+
+        pass
+
+    campo_senha = None
+
+    try:
+
+        campo_senha = wait.until(
+            EC.visibility_of_element_located(
+                (
+                    By.CSS_SELECTOR,
+                    "input[type='password']"
+                )
+            )
+        )
+
+    except TimeoutException:
+
+        pass
+
+    if (
+        campo_email is None
+        or campo_senha is None
+    ):
+
+        print(
+            "⚠ Campos não localizados."
+        )
+
+        input(
+            "Realize o login manualmente "
+            "e pressione ENTER..."
+        )
+
+        return
+
+    campo_email.clear()
+
+    campo_email.send_keys(
+        NEXUS_EMAIL
+    )
+
+    campo_senha.clear()
+
+    if not NEXUS_SENHA:
+
+        print(
+            "⚠ NEXUS_SENHA não configurada."
+        )
+
+        input(
+            "Digite a senha manualmente "
+            "e pressione ENTER..."
+        )
+
+        return
+
+    campo_senha.send_keys(
+        NEXUS_SENHA
+    )
+
+    botao_entrar = wait.until(
+        EC.element_to_be_clickable(
+            (
+                By.CSS_SELECTOR,
+                "button[type='submit']"
+            )
+        )
+    )
+
+    driver.execute_script(
+        "arguments[0].click();",
+        botao_entrar
+    )
+
+    print(
+        "✓ Login enviado."
+    )
+
+    time.sleep(5)
+
+
+# ============================================================
+# CLICAR NEXUS FROTA BI
+# ============================================================
+
+def clicar_nexus_frota_bi(
+    driver
+):
+
+    wait = WebDriverWait(
+        driver,
+        TIMEOUT
+    )
+
+    try:
+
+        elemento = wait.until(
+            EC.presence_of_element_located(
+                (
+                    By.XPATH,
+                    "//*[contains("
+                    "normalize-space(.),"
+                    "'Nexus Frota BI'"
+                    ")]"
+                )
+            )
+        )
+
+        try:
+
+            pai = elemento.find_element(
+                By.XPATH,
+                "./ancestor::*["
+                "self::button or self::a"
+                "][1]"
+            )
+
+            elemento = pai
+
+        except Exception:
+
+            pass
+
+        driver.execute_script(
+            "arguments[0].click();",
+            elemento
+        )
+
+        print(
+            "✓ Nexus Frota BI."
+        )
+
+        time.sleep(4)
+
+        return True
+
+    except Exception as erro:
+
+        print(
+            f"⚠ Erro Nexus Frota BI: "
+            f"{erro}"
+        )
+
+        return False
+
+
+# ============================================================
+# MONITORAMENTO E ANÁLISE
+# ============================================================
+
+def acessar_monitoramento(
+    driver
+):
+
+    wait = WebDriverWait(
+        driver,
+        TIMEOUT
+    )
+
+    try:
+
+        elemento = wait.until(
+            EC.element_to_be_clickable(
+                (
+                    By.XPATH,
+                    "//button[contains("
+                    "normalize-space(.),"
+                    "'Monitoramento e Análise'"
+                    ")]"
+                )
+            )
+        )
+
+    except TimeoutException:
+
+        elemento = wait.until(
+            EC.element_to_be_clickable(
+                (
+                    By.XPATH,
+                    "//button[contains("
+                    "normalize-space(.),"
+                    "'Monitoramento e Analise'"
+                    ")]"
+                )
+            )
+        )
+
+    driver.execute_script(
+        "arguments[0].click();",
+        elemento
+    )
+
+    print(
+        "✓ Monitoramento e Análise."
+    )
+
+    time.sleep(3)
+
+
+# ============================================================
+# ABA ABASTECIMENTO X TELEMETRIA
+# ============================================================
+
+def acessar_abastecimento_telemetria(
+    driver
+):
+
+    wait = WebDriverWait(
+        driver,
+        TIMEOUT
+    )
+
+    elemento = wait.until(
+        EC.element_to_be_clickable(
+            (
+                By.XPATH,
+                "//button[contains("
+                "normalize-space(.),"
+                "'Abastecimento x Telemetria'"
+                ")]"
+            )
+        )
+    )
+
+    driver.execute_script(
+        "arguments[0].click();",
+        elemento
+    )
+
+    print(
+        "✓ Abastecimento x Telemetria."
+    )
+
+    time.sleep(3)
+
+
+# ============================================================
+# INPUT HTML
+# ============================================================
+
+def localizar_input_html(
+    driver
+):
+
+    seletores = [
+        'input[type="file"][accept=".html"]',
+        'input[type="file"][accept=".HTML"]',
+        'input[type="file"]',
+    ]
+
+    for seletor in seletores:
+
+        try:
+
+            elementos = driver.find_elements(
+                By.CSS_SELECTOR,
+                seletor
+            )
+
+            for elemento in elementos:
+
+                if elemento.is_enabled():
+
+                    return elemento
+
+        except Exception:
+
+            continue
+
+    return None
+
+
+# ============================================================
+# ENVIAR HTML
+# ============================================================
+
+def enviar_html(
+    driver,
+    arquivo_html
+):
+
+    campo = None
+
+    limite = (
+        time.time()
+        + TIMEOUT
+    )
+
+    while time.time() < limite:
+
+        campo = localizar_input_html(
+            driver
+        )
+
+        if campo:
+            break
+
+        time.sleep(0.5)
+
+    if campo is None:
+
+        raise RuntimeError(
+            "Input de arquivos HTML "
+            "não encontrado."
+        )
+
+    print(
+        f"📤 Enviando "
+        f"{arquivo_html.name}"
+    )
+
+    campo.send_keys(
+        str(
+            arquivo_html.resolve()
+        )
+    )
+
+    print(
+        "✓ HTML enviado."
+    )
+
+    time.sleep(3)
+
+
+# ============================================================
+# LISTAR EXCELS
+# ============================================================
+
+def listar_excels():
+
+    if not PASTA_EXCEL_NEXUS.exists():
+        return set()
+
+    return {
+        arquivo.name
+        for arquivo
+        in PASTA_EXCEL_NEXUS.iterdir()
+        if (
+            arquivo.is_file()
+            and
+            arquivo.suffix.lower()
+            in {
+                ".xlsx",
+                ".xls"
+            }
+            and
+            not arquivo.name.startswith(
+                "~$"
+            )
+        )
+    }
+
+
+# ============================================================
+# LOCALIZAR BOTÃO EXCEL
+# ============================================================
+
+def localizar_botao_excel(
+    driver
+):
+
+    elementos = driver.find_elements(
+        By.XPATH,
+        "//button | //a | //input"
+    )
+
+    for elemento in elementos:
+
+        try:
+
+            if not elemento.is_displayed():
+                continue
+
+            texto = normalizar_texto(
+                elemento.text
+            )
+
+            valor = normalizar_texto(
+                elemento.get_attribute(
+                    "value"
+                )
+            )
+
+            title = normalizar_texto(
+                elemento.get_attribute(
+                    "title"
+                )
+            )
+
+            conteudo = (
+                texto
+                + " "
+                + valor
+                + " "
+                + title
+            )
+
+            if "EXCEL" in conteudo:
+
+                return elemento
+
+        except Exception:
+
+            continue
+
+    return None
+
+
+# ============================================================
+# CLICAR EXCEL
+# ============================================================
+
+def clicar_excel(
+    driver
+):
+
+    limite = (
+        time.time()
+        + TIMEOUT
+    )
+
+    botao = None
+
+    while time.time() < limite:
+
+        botao = localizar_botao_excel(
+            driver
+        )
+
+        if botao:
+            break
+
+        time.sleep(0.5)
+
+    if botao is None:
+
+        raise RuntimeError(
+            "Botão EXCEL não encontrado."
+        )
+
+    driver.execute_script(
+        """
+        arguments[0].scrollIntoView({
+            block: 'center'
+        });
+        """,
+        botao
+    )
+
+    time.sleep(0.5)
+
+    try:
+
+        botao.click()
+
+    except Exception:
+
+        driver.execute_script(
+            "arguments[0].click();",
+            botao
+        )
+
+    print(
+        "✓ EXCEL clicado."
+    )
+
+
+# ============================================================
+# ESPERAR DOWNLOAD EXCEL
+# ============================================================
+
+def esperar_download_excel(
+    arquivos_antes
+):
+
+    limite = (
+        time.time()
+        + TIMEOUT_DOWNLOAD
+    )
+
+    while time.time() < limite:
+
+        arquivos = [
+            arquivo
+            for arquivo
+            in PASTA_EXCEL_NEXUS.iterdir()
+            if arquivo.is_file()
+        ]
+
+        novos = [
+            arquivo
+            for arquivo in arquivos
+            if (
+                arquivo.name
+                not in arquivos_antes
+            )
+            and
+            arquivo.suffix.lower()
+            in {
+                ".xlsx",
+                ".xls"
+            }
+            and
+            not arquivo.name.startswith(
+                "~$"
+            )
+        ]
+
+        temporarios = [
+            arquivo
+            for arquivo in arquivos
+            if (
+                arquivo.name.endswith(
+                    ".crdownload"
+                )
+                or
+                arquivo.name.endswith(
+                    ".tmp"
+                )
+            )
+        ]
+
+        if novos and not temporarios:
+
+            arquivo = max(
+                novos,
+                key=lambda x:
+                    x.stat().st_mtime
+            )
+
+            tamanho1 = (
+                arquivo.stat().st_size
+            )
+
+            time.sleep(1)
+
+            if arquivo.exists():
+
+                tamanho2 = (
+                    arquivo.stat().st_size
+                )
+
+                if tamanho1 == tamanho2:
+
+                    return arquivo
+
+        time.sleep(0.5)
+
+    return None
+
+
+# ============================================================
+# RENOMEAR EXCEL
+# ============================================================
+
+def renomear_excel(
+    arquivo,
+    arquivo_html
+):
+
+    placa = arquivo_html.stem
+
+    nome = (
+        f"{nome_seguro(placa)}_"
+        f"{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        f".xlsx"
+    )
+
+    destino = (
+        PASTA_EXCEL_NEXUS
+        / nome
+    )
+
+    if destino.exists():
+        destino.unlink()
+
+    shutil.move(
+        str(arquivo),
+        str(destino)
+    )
+
+    return destino
+
+
+# ============================================================
+# PROCESSAR HTML NO NEXUS
+# ============================================================
+
+def processar_html_nexus(
+    driver,
+    arquivo_html
+):
+
+    try:
+
+        enviar_html(
+            driver,
+            arquivo_html
+        )
+
+        time.sleep(
+            INTERVALO_ENTRE_ANALISES
+        )
+
+        arquivos_antes = listar_excels()
+
+        clicar_excel(
+            driver
+        )
+
+        print(
+            "⬇ Aguardando Excel..."
+        )
+
+        arquivo = (
+            esperar_download_excel(
+                arquivos_antes
+            )
+        )
+
+        if arquivo is None:
+
+            raise TimeoutException(
+                "Excel não baixado."
+            )
+
+        arquivo_final = (
+            renomear_excel(
+                arquivo,
+                arquivo_html
+            )
+        )
+
+        print(
+            f"✓ Excel salvo: "
+            f"{arquivo_final.name}"
+        )
+
+        return arquivo_final
+
+    except Exception as erro:
+
+        print(
+            f"❌ Erro processando "
+            f"{arquivo_html.name}: "
+            f"{erro}"
+        )
+
+        return None
+
+
+# ============================================================
+# PROCESSAR TODOS OS HTMLS
+# ============================================================
+
+def processar_htmls_nexus(
+    driver,
+    arquivos_html
+):
+
+    arquivos_excel = []
+
+    total = len(
+        arquivos_html
+    )
+
+    for indice, arquivo_html in enumerate(
+        arquivos_html,
+        start=1
+    ):
+
+        print()
+
+        print(
+            "=" * 70
+        )
+
+        print(
+            f"ANÁLISE {indice}/{total}"
+        )
+
+        print(
+            arquivo_html.name
+        )
+
+        print(
+            "=" * 70
+        )
+
+        arquivo_excel = (
+            processar_html_nexus(
+                driver,
+                arquivo_html
+            )
+        )
+
+        if arquivo_excel:
+
+            arquivos_excel.append(
+                arquivo_excel
+            )
+
+        time.sleep(
+            INTERVALO_ENTRE_ANALISES
+        )
+
+    return arquivos_excel
+
+
+# ============================================================
+# COLUNA DESVIOS
+# ============================================================
+
+def encontrar_coluna_desvios(
+    df
+):
+
+    for coluna in df.columns:
+
+        if (
+            normalizar_texto(
+                coluna
+            )
+            == "DESVIOS"
+        ):
+
+            return coluna
+
+    return None
+
+
+# ============================================================
+# FILTRO DOS DESVIOS
+# ============================================================
+
+def possui_desvio_permitido(
+    valor
+):
+
+    texto = normalizar_texto(
+        valor
+    )
+
+    if not texto:
+        return False
+
+    desvios = [
+        "MOTOR LIGA",
+        "DIVERGENCIA ENDERECO",
+        "MOTORISTA DIVERGENTE",
+    ]
+
+    for desvio in desvios:
+
+        if desvio in texto:
+            return True
+
+    return False
+
+
+def filtrar_desvios(
+    df
+):
+
+    coluna = encontrar_coluna_desvios(
+        df
+    )
+
+    if coluna is None:
+        return pd.DataFrame()
+
+    mascara = (
+        df[coluna]
+        .fillna("")
+        .map(
+            possui_desvio_permitido
+        )
+    )
+
+    return df.loc[
+        mascara
+    ].copy()
+
+
+# ============================================================
+# LER EXCEL
+# ============================================================
+
+def ler_excel_desvios(
+    arquivo
+):
+
+    registros = []
+
+    try:
+
+        xls = pd.ExcelFile(
+            arquivo
+        )
+
+    except Exception as erro:
+
+        print(
+            f"⚠ Erro em {arquivo.name}: "
+            f"{erro}"
+        )
+
+        return pd.DataFrame()
+
+    for aba in xls.sheet_names:
+
+        try:
+
+            df = pd.read_excel(
+                arquivo,
+                sheet_name=aba
+            )
+
+            if df.empty:
+                continue
+
+            df_filtrado = (
+                filtrar_desvios(
+                    df
+                )
+            )
+
+            if df_filtrado.empty:
+                continue
+
+            df_filtrado.insert(
+                0,
+                "ARQUIVO_ORIGEM",
+                arquivo.name
+            )
+
+            df_filtrado.insert(
+                1,
+                "ABA_ORIGEM",
+                aba
+            )
+
+            registros.append(
+                df_filtrado
+            )
+
+        except Exception as erro:
+
+            print(
+                f"⚠ Erro na aba "
+                f"{aba}: {erro}"
+            )
+
+    if not registros:
+        return pd.DataFrame()
+
+    return pd.concat(
+        registros,
+        ignore_index=True,
+        sort=False
+    )
+
+
+# ============================================================
+# FORMATAR EXCEL
+# ============================================================
+
+def formatar_excel(
+    arquivo,
+    aba
+):
+
+    wb = load_workbook(
+        arquivo
+    )
+
+    ws = wb[
+        aba
+    ]
+
+    for cell in ws[1]:
+
+        cell.font = Font(
+            bold=True
+        )
+
+        cell.alignment = Alignment(
+            horizontal="center",
+            vertical="center"
+        )
+
+    ws.freeze_panes = "A2"
+
+    if ws.max_row >= 1:
+
+        ws.auto_filter.ref = (
+            ws.dimensions
+        )
+
+    for coluna in ws.columns:
+
+        maior = 0
+
+        for cell in coluna:
+
+            valor = (
+                ""
+                if cell.value is None
+                else str(cell.value)
+            )
+
+            maior = max(
+                maior,
+                len(valor)
+            )
+
+        letra = get_column_letter(
+            coluna[0].column
+        )
+
+        ws.column_dimensions[
+            letra
+        ].width = min(
+            max(
+                maior + 2,
+                10
+            ),
+            60
+        )
+
+    wb.save(
+        arquivo
+    )
+
+
+# ============================================================
+# UNIFICAR DESVIOS
+# ============================================================
+
+def gerar_unificado_desvios():
+
+    print(
+        "\n" + "=" * 70
+    )
+
+    print(
+        "GERANDO UNIFICADO DE DESVIOS"
+    )
+
+    print(
+        "=" * 70
+    )
+
+    todos = []
+
+    if ARQUIVO_AUDITORIA.exists():
+
+        try:
+
+            xls = pd.ExcelFile(
+                ARQUIVO_AUDITORIA
+            )
+
+            for aba in [
+                "Desvios",
+                "Abastecimento_x_Telemetria",
+                "Paradas_Motor_Ligado",
+            ]:
+
+                if aba not in xls.sheet_names:
+                    continue
+
+                df = pd.read_excel(
+                    ARQUIVO_AUDITORIA,
+                    sheet_name=aba
+                )
+
+                if not df.empty:
+
+                    df[
+                        "ABA_ORIGEM"
+                    ] = aba
+
+                    todos.append(
+                        df
+                    )
+
+        except Exception as erro:
+
+            print(
+                f"⚠ Erro lendo auditoria: "
+                f"{erro}"
+            )
+
+    if todos:
+
+        final = (
+            pd.concat(
+                todos,
+                ignore_index=True,
+                sort=False
+            )
+            .drop_duplicates()
+            .reset_index(drop=True)
+        )
+
+    else:
+
+        final = pd.DataFrame(
+            columns=[
+                "PLACA",
+                "DATA_HORA",
+                "TIPO_DESVIO",
+                "CRITICIDADE",
+                "DETALHE",
+                "ABA_ORIGEM",
+            ]
+        )
+
+    with pd.ExcelWriter(
+        ARQUIVO_UNIFICADO,
+        engine="openpyxl"
+    ) as writer:
+
+        final.to_excel(
+            writer,
+            sheet_name="Desvios",
+            index=False
+        )
+
+    formatar_excel(
+        ARQUIVO_UNIFICADO,
+        "Desvios"
+    )
+
+    print(
+        f"✓ UNIFICADO GERADO: "
+        f"{ARQUIVO_UNIFICADO.resolve()}"
+    )
+
+    print(
+        f"✓ Registros: "
+        f"{len(final)}"
+    )
+
+    return ARQUIVO_UNIFICADO
+
+
+# ============================================================
+# MAIN
+# ============================================================
+
+def main():
+
+    print()
+
+    print(
+        "=" * 70
+    )
+
+    print(
+        "AUTOVISION → AUDITORIA DE TELEMETRIA"
+    )
+
+    print(
+        "=" * 70
+    )
+
+    # ========================================================
+    # VALIDAR PLACAS
+    # ========================================================
+
+    validar_placas()
+
+    # ========================================================
+    # PERÍODO
+    # ========================================================
+
+    inicio, fim = obter_periodo()
+
+    driver = criar_driver()
+
+    try:
+
+        # ====================================================
+        # AUTOVISION
+        # ====================================================
+
+        fazer_login(
+            driver
+        )
+
+        arquivos_html = (
+            processar_placas(
+                driver,
+                inicio,
+                fim
+            )
+        )
+
+        print()
+
+        print(
+            "=" * 70
+        )
+
+        print(
+            "RESULTADO AUTOVISION"
+        )
+
+        print(
+            "=" * 70
+        )
+
+        print(
+            f"Placas configuradas: "
+            f"{len(PLACAS)}"
+        )
+
+        print(
+            f"HTMLs baixados: "
+            f"{len(arquivos_html)}"
+        )
+
+        if not arquivos_html:
+
+            arquivos_html = (
+                listar_htmls_periodo(
+                    inicio,
+                    fim
+                )
+            )
+
+        if not arquivos_html:
+
+            print(
+                "❌ Nenhum HTML foi baixado "
+                "ou encontrado na pasta."
+            )
+
+            return
+
+        # ====================================================
+        # AUDITORIA LOCAL
+        # ====================================================
+
+        arquivos_para_analise = list(
+            arquivos_html
+        )
+
+        existentes = (
+            listar_htmls_periodo(
+                inicio,
+                fim
+            )
+        )
+
+        nomes = {
+            a.name
+            for a in arquivos_para_analise
+        }
+
+        for arquivo in existentes:
+
+            if arquivo.name not in nomes:
+
+                arquivos_para_analise.append(
+                    arquivo
+                )
+
+        executar_auditoria(
+            arquivos_para_analise,
+            inicio,
+            fim
+        )
+
+        gerar_unificado_desvios()
+
+        # ====================================================
+        # FINAL
+        # ====================================================
+
+        print()
+
+        print(
+            "=" * 70
+        )
+
+        print(
+            "✅ PROCESSO FINALIZADO"
+        )
+
+        print(
+            "=" * 70
+        )
+
+        print(
+            f"HTMLs: "
+            f"{PASTA_HTML.resolve()}"
+        )
+
+        print(
+            f"Auditoria: "
+            f"{ARQUIVO_AUDITORIA.resolve()}"
+        )
+
+        print(
+            f"Unificado: "
+            f"{ARQUIVO_UNIFICADO.resolve()}"
+        )
+
+    except KeyboardInterrupt:
+
+        print(
+            "\nProcesso interrompido."
+        )
+
+    except Exception as erro:
+
+        print()
+
+        print(
+            "=" * 70
+        )
+
+        print(
+            "❌ ERRO GERAL"
+        )
+
+        print(
+            "=" * 70
+        )
+
+        print(
+            erro
+        )
+
+        import traceback
+
+        traceback.print_exc()
+
+    finally:
+
+        try:
+
+            driver.quit()
+
+        except Exception:
+
+            pass
+
+
+# ============================================================
+# EXECUTAR
+# ============================================================
+
+if __name__ == "__main__":
+
+    main()
+
+
+
+
+
+
+
+
+
+
+
+
+
+
