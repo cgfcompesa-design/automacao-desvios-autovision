@@ -197,7 +197,7 @@ TOLERANCIA_IGNICAO_ABASTECIMENTO_MIN = 3
 
 GOOGLE_PLACES_API_KEY = os.environ.get(
     "GOOGLE_PLACES_API_KEY",
-    ""
+    "AIzaSyBtJmgG71Efuw_JEN8_-nQHps53K9c-RBY"
 )
 
 OVERPASS_URL = os.environ.get(
