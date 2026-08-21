@@ -1,2 +1,6 @@
 
 requests==2.32.5
+pandas
+requests
+openpyxl
+selenium
