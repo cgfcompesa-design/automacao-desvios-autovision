@@ -462,6 +462,17 @@ NEXUS_SENHA = os.environ.get(
 
 
 # ============================================================
+# GOOGLE APPS SCRIPT
+# ============================================================
+
+GOOGLE_SCRIPT_URL = (
+    "https://script.google.com/macros/s/"
+    "AKfycbxREO251djkCbe1HKo8wIxDhXM9CVeaBsMF3lzphYDTjM0272WTzne3PnFoMl9sUNWRhw"
+    "/exec"
+)
+
+
+# ============================================================
 # NORMALIZAR TEXTO
 # ============================================================
 
@@ -6140,6 +6151,124 @@ def ler_excel_desvios(
 
 
 # ============================================================
+# ENVIO DOS RESULTADOS PARA O GOOGLE SHEETS
+# ============================================================
+
+def enviar_resultados_google_sheets(resultados):
+    """
+    Envia os resultados processados para o Google Apps Script,
+    que grava os dados na aba RESULTADOS.
+    """
+
+    print("\n" + "=" * 70)
+    print("ENVIANDO RESULTADOS PARA O GOOGLE SHEETS")
+    print("=" * 70)
+
+    if not GOOGLE_SCRIPT_URL or not GOOGLE_SCRIPT_URL.startswith("https://"):
+        print("❌ ERRO: GOOGLE_SCRIPT_URL não configurada ou inválida.")
+        return False
+
+    try:
+        if isinstance(resultados, pd.DataFrame):
+            print(f"✓ DataFrame recebido com {len(resultados)} registros")
+            if resultados.empty:
+                print("⚠ Nenhum resultado para enviar.")
+                return True
+
+            df_envio = resultados.copy()
+
+            for coluna in df_envio.columns:
+                if pd.api.types.is_datetime64_any_dtype(df_envio[coluna]):
+                    df_envio[coluna] = df_envio[coluna].dt.strftime("%d/%m/%Y %H:%M:%S")
+
+            df_envio = df_envio.astype(object).where(pd.notnull(df_envio), "")
+            dados = df_envio.to_dict(orient="records")
+        else:
+            dados = resultados
+
+        payload = {
+            "acao": "resultados",
+            "resultados": dados
+        }
+
+        corpo = json.dumps(
+            payload,
+            ensure_ascii=False,
+            default=str,
+            allow_nan=False
+        )
+
+    except Exception as erro:
+        print(f"❌ ERRO AO PREPARAR RESULTADOS: {erro}")
+        import traceback
+        traceback.print_exc()
+        return False
+
+    max_tentativas = 3
+    delay_inicial = 2
+
+    for tentativa in range(1, max_tentativas + 1):
+        print(f"\n📤 Tentativa {tentativa}/{max_tentativas}...")
+
+        try:
+            response = requests.post(
+                GOOGLE_SCRIPT_URL,
+                data=corpo.encode("utf-8"),
+                headers={
+                    "Content-Type": "application/json; charset=utf-8"
+                },
+                timeout=60
+            )
+
+            print(f"✓ Status HTTP: {response.status_code}")
+
+            if response.status_code not in (200, 201):
+                raise requests.exceptions.RequestException(
+                    f"Status HTTP inesperado: {response.status_code} - "
+                    f"{response.text[:500]}"
+                )
+
+            try:
+                resposta = response.json()
+            except ValueError:
+                print("⚠ Apps Script não retornou JSON válido.")
+                print(response.text[:500])
+                return True
+
+            if resposta.get("success", False):
+                quantidade = resposta.get("quantidade", len(dados))
+                mensagem = resposta.get("mensagem", "Dados enviados com sucesso.")
+                print("\n" + "=" * 70)
+                print("✅ RESULTADOS ENVIADOS COM SUCESSO!")
+                print("=" * 70)
+                print(f"✓ Registros gravados: {quantidade}")
+                print(f"✓ {mensagem}")
+                return True
+
+            erro = resposta.get("erro", resposta.get("mensagem", "Erro desconhecido."))
+            print(f"❌ Apps Script retornou erro: {erro}")
+
+        except requests.exceptions.Timeout:
+            print("❌ TIMEOUT ao conectar com o Google Apps Script.")
+        except requests.exceptions.ConnectionError as erro:
+            print(f"❌ ERRO DE CONEXÃO: {erro}")
+        except requests.exceptions.RequestException as erro:
+            print(f"❌ ERRO NA REQUISIÇÃO: {erro}")
+        except Exception as erro:
+            print(f"❌ ERRO INESPERADO: {erro}")
+            import traceback
+            traceback.print_exc()
+
+        if tentativa < max_tentativas:
+            espera = delay_inicial * (2 ** (tentativa - 1))
+            print(f"⏳ Nova tentativa em {espera} segundos...")
+            time.sleep(espera)
+
+    print("❌ NÃO FOI POSSÍVEL ENVIAR OS RESULTADOS PARA O GOOGLE SHEETS.")
+    return False
+
+
+# ============================================================
 # FORMATAR EXCEL
 # ============================================================
 
@@ -6320,6 +6449,20 @@ def gerar_unificado_desvios():
         f"✓ Registros: "
         f"{len(final)}"
     )
+
+    # ========================================================
+    # ENVIAR RESULTADOS PROCESSADOS PARA O GOOGLE SHEETS
+    # ========================================================
+
+    if not final.empty:
+        enviado = enviar_resultados_google_sheets(final)
+
+        if enviado:
+            print("✓ Resultados enviados para a aba RESULTADOS.")
+        else:
+            print("⚠ O unificado foi gerado, mas o envio ao Google Sheets falhou.")
+    else:
+        print("⚠ Nenhum resultado final para enviar à aba RESULTADOS.")
 
     return ARQUIVO_UNIFICADO
 
