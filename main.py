@@ -6532,6 +6532,78 @@ def main():
             pass
 
 
+
+
+# ============================================================
+# ENVIO DOS RESULTADOS PARA O GOOGLE SHEETS
+# ============================================================
+
+def enviar_resultados_google_sheets(resultados):
+    """
+    Envia os resultados processados para o Google Apps Script,
+    que grava os dados na aba RESULTADOS.
+    """
+
+    print("\n" + "=" * 60)
+    print("ENVIANDO RESULTADOS PARA O GOOGLE SHEETS")
+    print("=" * 60)
+
+    try:
+        # URL do seu Web App do Google Apps Script
+        url = GOOGLE_SCRIPT_URL
+
+        # Converte DataFrame para lista de dicionários
+        if isinstance(resultados, pd.DataFrame):
+            dados = resultados.fillna("").to_dict(orient="records")
+        else:
+            dados = resultados
+
+        payload = {
+            "acao": "resultados",
+            "dados": dados
+        }
+
+        response = requests.post(
+            url,
+            json=payload,
+            timeout=60
+        )
+
+        response.raise_for_status()
+
+        print("\nRESULTADOS ENVIADOS COM SUCESSO!")
+        print(response.text)
+
+        return True
+
+    except requests.exceptions.RequestException as e:
+        print("\nERRO DE COMUNICAÇÃO:")
+        print(e)
+
+        return False
+
+    except Exception as e:
+        print("\nERRO AO ENVIAR RESULTADOS:")
+        print(e)
+
+        return False
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 # ============================================================
 # EXECUTAR
 # ============================================================
