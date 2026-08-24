@@ -6894,29 +6894,3 @@ def enviar_resultados_google_sheets(resultados):
 if __name__ == "__main__":
 
     main()
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
