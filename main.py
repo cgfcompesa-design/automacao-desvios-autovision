@@ -51,7 +51,7 @@ URL_RELATORIO_POSICAO = (
 
 GOOGLE_SCRIPT_URL = os.environ.get(
     "GOOGLE_SCRIPT_URL",
-    "https://script.google.com/macros/s/AKfycbyc2E775gKXnk5xwMuRt5E3vx5o6I5M-HfLhis4sqkp_Hd2R7n99ZwPy5E7f38foZsslQ/exec"
+    "https://script.google.com/macros/s/AKfycbxREO251djkCbe1HKo8wIxDhXM9CVeaBsMF3lzphYDTjM0272WTzne3PnFoMl9sUNWRhw/exec"
 )
 
 
@@ -6643,17 +6643,3 @@ def enviar_resultados_google_sheets(resultados):
 if __name__ == "__main__":
 
     main()
-
-
-
-
-
-
-
-
-
-
-
-
-
-
