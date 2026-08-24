@@ -1,3 +1,4 @@
+
 import os
 import re
 import time
@@ -74,7 +75,9 @@ URL_ABASTECIMENTO_EDIT = (
 # ============================================================
 
 URL_TELEMETRIA_OCIOSIDADE = (
-    "https://docs.google.com/spreadsheets/d/e/2PACX-1vQU22jWG-2LuGLDuLYvVQoBbv5JdArq9WUwGcJ3znHPZWHrFABji3IFNFwYCtVX7u8uo-Rd7YJFb9fZ/pub?output=csv"
+    "https://docs.google.com/spreadsheets/d/e/"
+    "2PACX-1vQU22jWG-2LuGLDuLYvVQoBbv5JdArq9WUwGcJ3znHPZWHrFABji3IFNFwYCtVX7u8uo-Rd7YJFb9fZ/"
+    "pub?gid=756259345&single=true&output=csv"
 )
 
 URL_TELEMETRIA_OCIOSIDADE_EDIT = (
@@ -86,6 +89,32 @@ URL_TELEMETRIA_OCIOSIDADE_EDIT = (
 ABA_TELEMETRIA_OCIOSIDADE = "Geral"
 
 COLUNA_PLACA_TELEMETRIA = "PLACA"
+
+
+# ============================================================
+# GOOGLE SHEETS - DESTINO DOS RESULTADOS
+# ============================================================
+#
+# A URL abaixo é a URL pública da planilha usada para consulta.
+# Ela NÃO permite gravação via CSV.
+# A gravação é feita pelo Google Apps Script (doPost).
+#
+URL_PLANILHA_RESULTADOS_CSV = (
+    "https://docs.google.com/spreadsheets/d/e/"
+    "2PACX-1vQU22jWG-2LuGLDuLYvVQoBbv5JdArq9WUwGcJ3znHPZWHrFABji3IFNFwYCtVX7u8uo-Rd7YJFb9fZ/"
+    "pub?output=csv"
+)
+
+GID_RESULTADOS = 633249610
+ABA_RESULTADOS = "RESULTADOS"
+
+# Endpoint de escrita. O Apps Script deve estar publicado como
+# Aplicativo da Web e ter acesso à planilha de destino.
+GOOGLE_SCRIPT_URL = (
+    "https://script.google.com/macros/s/"
+    "AKfycbxREO251djkCbe1HKo8wIxDhXM9CVeaBsMF3lzphYDTjM0272WTzne3PnFoMl9sUNWRhw"
+    "/exec"
+)
 
 
 # ============================================================
@@ -197,17 +226,6 @@ TOLERANCIA_IGNICAO_ABASTECIMENTO_MIN = 3
 
 
 
-
-
-# ============================================================
-# GOOGLE APPS SCRIPT
-# ============================================================
-
-GOOGLE_SCRIPT_URL = (
-    "https://script.google.com/macros/s/"
-    "AKfycbxREO251djkCbe1HKo8wIxDhXM9CVeaBsMF3lzphYDTjM0272WTzne3PnFoMl9sUNWRhw"
-    "/exec"
-)
 
 # ============================================================
 # NOME SEGURO PARA ARQUIVOS
@@ -6149,512 +6167,6 @@ def ler_excel_desvios(
     )
 
 
-
-# ============================================================
-# ENVIO DOS RESULTADOS PARA O GOOGLE SHEETS
-# ============================================================
-
-
-
-# ============================================================
-# ENVIO DOS RESULTADOS PARA O GOOGLE SHEETS
-# ============================================================
-
-def enviar_resultados_google_sheets(resultados):
-    """
-    Envia os resultados processados para o Google Apps Script.
-
-    A ordem das colunas enviada ao Google Sheets é EXATAMENTE
-    a mesma ordem existente no DataFrame que será gravado no Excel.
-    """
-
-    print("\n" + "=" * 70)
-    print("ENVIANDO RESULTADOS PARA O GOOGLE SHEETS")
-    print("=" * 70)
-
-    if not GOOGLE_SCRIPT_URL:
-        print("❌ ERRO: GOOGLE_SCRIPT_URL não configurada.")
-        return False
-
-    if not GOOGLE_SCRIPT_URL.startswith("https://"):
-        print(
-            f"❌ ERRO: URL inválida: "
-            f"{GOOGLE_SCRIPT_URL}"
-        )
-        return False
-
-    try:
-
-        if not isinstance(
-            resultados,
-            pd.DataFrame
-        ):
-            raise TypeError(
-                "resultados precisa ser um "
-                "pandas.DataFrame."
-            )
-
-        print(
-            f"✓ DataFrame recebido com "
-            f"{len(resultados)} registros"
-        )
-
-        if resultados.empty:
-
-            print(
-                "⚠ DataFrame vazio - "
-                "nenhum dado para enviar."
-            )
-
-            return True
-
-        # ====================================================
-        # COPIAR DATAFRAME
-        # ====================================================
-
-        df_envio = resultados.copy()
-
-        # ====================================================
-        # PRESERVAR EXATAMENTE A ORDEM DO EXCEL
-        # ====================================================
-
-        colunas = list(
-            df_envio.columns
-        )
-
-        print()
-        print("ORDEM DAS COLUNAS ENVIADAS:")
-        print("-" * 70)
-
-        for numero, coluna in enumerate(
-            colunas,
-            start=1
-        ):
-
-            print(
-                f"{numero:02d} -> {coluna}"
-            )
-
-        print("-" * 70)
-
-        # ====================================================
-        # CONVERTER DATAS
-        # ====================================================
-
-        for coluna in df_envio.columns:
-
-            try:
-
-                if pd.api.types.is_datetime64_any_dtype(
-                    df_envio[coluna]
-                ):
-
-                    df_envio[coluna] = (
-                        df_envio[coluna]
-                        .dt.strftime(
-                            "%d/%m/%Y %H:%M:%S"
-                        )
-                    )
-
-            except Exception as erro_data:
-
-                print(
-                    f"⚠ Erro convertendo coluna "
-                    f"{coluna}: {erro_data}"
-                )
-
-        # ====================================================
-        # TRATAR NaN / NaT / pd.NA
-        # ====================================================
-
-        df_envio = (
-            df_envio
-            .astype(object)
-            .where(
-                pd.notnull(df_envio),
-                ""
-            )
-        )
-
-        # ====================================================
-        # TRANSFORMAR EM LISTA DE DICIONÁRIOS
-        # ====================================================
-
-        dados = (
-            df_envio
-            .to_dict(
-                orient="records"
-            )
-        )
-
-        # ====================================================
-        # PAYLOAD
-        # ====================================================
-
-        payload = {
-
-            "acao": "resultados",
-
-            # Ordem EXATA do Excel
-            "colunas": colunas,
-
-            # Dados
-            "resultados": dados
-        }
-
-        corpo = json.dumps(
-            payload,
-            ensure_ascii=False,
-            default=str,
-            allow_nan=False
-        )
-
-        print()
-        print(
-            f"✓ {len(dados)} registros preparados."
-        )
-
-        print(
-            f"✓ {len(colunas)} colunas preparadas."
-        )
-
-        print(
-            f"✓ JSON preparado: "
-            f"{len(corpo)} bytes"
-        )
-
-        # ====================================================
-        # MOSTRAR PRIMEIRO REGISTRO
-        # ====================================================
-
-        if dados:
-
-            print()
-            print(
-                "PRIMEIRO REGISTRO ENVIADO:"
-            )
-
-            print("-" * 70)
-
-            for coluna in colunas:
-
-                print(
-                    f"{coluna}: "
-                    f"{dados[0].get(coluna, '')}"
-                )
-
-            print("-" * 70)
-
-    except Exception as erro:
-
-        print(
-            f"❌ ERRO AO PREPARAR RESULTADOS: "
-            f"{erro}"
-        )
-
-        import traceback
-        traceback.print_exc()
-
-        return False
-
-    # ========================================================
-    # RETRY
-    # ========================================================
-
-    max_tentativas = 3
-    delay_inicial = 2
-
-    for tentativa in range(
-        1,
-        max_tentativas + 1
-    ):
-
-        print(
-            f"\n📤 Tentativa "
-            f"{tentativa}/{max_tentativas}..."
-        )
-
-        try:
-
-            response = requests.post(
-
-                GOOGLE_SCRIPT_URL,
-
-                data=corpo.encode(
-                    "utf-8"
-                ),
-
-                headers={
-                    "Content-Type":
-                        "application/json; charset=utf-8",
-
-                    "Accept":
-                        "application/json"
-                },
-
-                timeout=60
-            )
-
-            print(
-                f"✓ Status HTTP: "
-                f"{response.status_code}"
-            )
-
-            # =================================================
-            # STATUS HTTP
-            # =================================================
-
-            if response.status_code not in (
-                200,
-                201
-            ):
-
-                print(
-                    "❌ Status HTTP inesperado:"
-                )
-
-                print(
-                    response.text[:2000]
-                )
-
-                if tentativa < max_tentativas:
-
-                    espera = (
-                        delay_inicial *
-                        (
-                            2 **
-                            (tentativa - 1)
-                        )
-                    )
-
-                    print(
-                        f"⏳ Aguardando "
-                        f"{espera}s..."
-                    )
-
-                    time.sleep(
-                        espera
-                    )
-
-                    continue
-
-                return False
-
-            # =================================================
-            # JSON DA RESPOSTA
-            # =================================================
-
-            try:
-
-                resultado_json = (
-                    response.json()
-                )
-
-            except ValueError:
-
-                print(
-                    "❌ Apps Script não "
-                    "retornou JSON válido."
-                )
-
-                print(
-                    "Resposta:"
-                )
-
-                print(
-                    response.text[:3000]
-                )
-
-                if tentativa < max_tentativas:
-
-                    espera = (
-                        delay_inicial *
-                        (
-                            2 **
-                            (tentativa - 1)
-                        )
-                    )
-
-                    time.sleep(
-                        espera
-                    )
-
-                    continue
-
-                return False
-
-            # =================================================
-            # MOSTRAR RESPOSTA
-            # =================================================
-
-            print()
-            print(
-                "RESPOSTA DO GOOGLE APPS SCRIPT:"
-            )
-
-            print(
-                json.dumps(
-                    resultado_json,
-                    ensure_ascii=False,
-                    indent=2
-                )
-            )
-
-            # =================================================
-            # VALIDAR SUCESSO
-            # =================================================
-
-            sucesso = resultado_json.get(
-                "success",
-                False
-            )
-
-            if not sucesso:
-
-                erro_msg = (
-                    resultado_json.get(
-                        "erro",
-                        "Erro desconhecido."
-                    )
-                )
-
-                print()
-                print(
-                    "❌ APPS SCRIPT RETORNOU ERRO:"
-                )
-
-                print(
-                    erro_msg
-                )
-
-                if tentativa < max_tentativas:
-
-                    espera = (
-                        delay_inicial *
-                        (
-                            2 **
-                            (tentativa - 1)
-                        )
-                    )
-
-                    print(
-                        f"⏳ Nova tentativa "
-                        f"em {espera}s..."
-                    )
-
-                    time.sleep(
-                        espera
-                    )
-
-                    continue
-
-                return False
-
-            # =================================================
-            # SUCESSO
-            # =================================================
-
-            quantidade = (
-                resultado_json.get(
-                    "quantidade",
-                    len(dados)
-                )
-            )
-
-            print()
-            print(
-                "=" * 70
-            )
-
-            print(
-                "✅ RESULTADOS ENVIADOS "
-                "COM SUCESSO!"
-            )
-
-            print(
-                "=" * 70
-            )
-
-            print(
-                f"✓ Registros enviados: "
-                f"{len(dados)}"
-            )
-
-            print(
-                f"✓ Registros gravados: "
-                f"{quantidade}"
-            )
-
-            print(
-                f"✓ Colunas enviadas: "
-                f"{len(colunas)}"
-            )
-
-            return True
-
-        except requests.exceptions.Timeout:
-
-            print(
-                "❌ TIMEOUT ao conectar "
-                "com o Google Apps Script."
-            )
-
-        except requests.exceptions.ConnectionError as erro:
-
-            print(
-                f"❌ ERRO DE CONEXÃO: "
-                f"{erro}"
-            )
-
-        except requests.exceptions.RequestException as erro:
-
-            print(
-                f"❌ ERRO HTTP: "
-                f"{erro}"
-            )
-
-        except Exception as erro:
-
-            print(
-                f"❌ ERRO INESPERADO: "
-                f"{erro}"
-            )
-
-            import traceback
-            traceback.print_exc()
-
-        if tentativa < max_tentativas:
-
-            espera = (
-                delay_inicial *
-                (
-                    2 **
-                    (tentativa - 1)
-                )
-            )
-
-            print(
-                f"⏳ Nova tentativa "
-                f"em {espera}s..."
-            )
-
-            time.sleep(
-                espera
-            )
-
-    print()
-    print(
-        "❌ FALHA: Não foi possível "
-        "enviar os resultados."
-    )
-
-    return False
-    
-
-
-    
-
-
 # ============================================================
 # FORMATAR EXCEL
 # ============================================================
@@ -6725,6 +6237,252 @@ def formatar_excel(
     wb.save(
         arquivo
     )
+
+
+# ============================================================
+# ENVIAR EXATAMENTE OS DADOS DO EXCEL PARA O GOOGLE SHEETS
+# ============================================================
+
+def enviar_resultados_google_sheets(df):
+    """
+    Envia para o Apps Script exatamente o mesmo DataFrame usado
+    para gerar o arquivo unificado_desvios.xlsx.
+
+    IMPORTANTE:
+    - A ordem das colunas é preservada exatamente como no Excel.
+    - Os valores são enviados exatamente na mesma ordem das linhas.
+    - Datas são convertidas para texto no mesmo formato exibido no Excel.
+    - O GID da aba RESULTADOS é enviado junto no payload.
+    """
+
+    print("\n" + "=" * 70)
+    print("ENVIANDO EXATAMENTE O EXCEL PARA O GOOGLE SHEETS")
+    print("=" * 70)
+
+    if not isinstance(df, pd.DataFrame):
+        print("❌ ERRO: o objeto enviado não é um DataFrame.")
+        return False
+
+    if not GOOGLE_SCRIPT_URL:
+        print("❌ ERRO: GOOGLE_SCRIPT_URL não configurada.")
+        return False
+
+    if not GOOGLE_SCRIPT_URL.startswith("https://"):
+        print(f"❌ ERRO: URL inválida: {GOOGLE_SCRIPT_URL}")
+        return False
+
+    try:
+        # ------------------------------------------------------
+        # COPIA SEM ALTERAR O DATAFRAME ORIGINAL
+        # ------------------------------------------------------
+        envio = df.copy()
+
+        # Esta é a ordem que o pandas usa para gerar o Excel.
+        colunas = list(envio.columns)
+
+        print(f"✓ Registros: {len(envio)}")
+        print(f"✓ Colunas: {len(colunas)}")
+        print("\n✓ ORDEM EXATA DAS COLUNAS DO EXCEL:")
+        for i, coluna in enumerate(colunas, start=1):
+            print(f"  {i:02d}. {coluna}")
+
+        # ------------------------------------------------------
+        # CONVERSÃO DE DATAS
+        # ------------------------------------------------------
+        for coluna in envio.columns:
+            serie = envio[coluna]
+
+            try:
+                if pd.api.types.is_datetime64_any_dtype(serie):
+                    envio[coluna] = serie.dt.strftime("%d/%m/%Y %H:%M:%S")
+                elif pd.api.types.is_object_dtype(serie):
+                    # Preserva datas Python/date/datetime que possam estar
+                    # misturadas em colunas object.
+                    envio[coluna] = serie.map(
+                        lambda valor: (
+                            valor.strftime("%d/%m/%Y %H:%M:%S")
+                            if isinstance(valor, datetime)
+                            else (
+                                valor.strftime("%d/%m/%Y")
+                                if isinstance(valor, date)
+                                else valor
+                            )
+                        )
+                    )
+            except Exception as erro_data:
+                print(f"⚠ Erro convertendo coluna {coluna}: {erro_data}")
+
+        # ------------------------------------------------------
+        # NaN / NaT / pd.NA -> vazio
+        # ------------------------------------------------------
+        envio = envio.astype(object).where(pd.notnull(envio), "")
+
+        # ------------------------------------------------------
+        # CONSTRUIR LINHAS PRESERVANDO A MESMA ORDEM DO EXCEL
+        # ------------------------------------------------------
+        linhas = []
+
+        for _, registro in envio.iterrows():
+            linha = []
+
+            for coluna in colunas:
+                valor = registro[coluna]
+
+                if valor is None or pd.isna(valor):
+                    valor = ""
+
+                # Tipos numpy/objetos precisam ser convertidos para tipos
+                # básicos para o JSON.
+                if hasattr(valor, "item"):
+                    try:
+                        valor = valor.item()
+                    except Exception:
+                        pass
+
+                if isinstance(valor, (datetime, date)):
+                    valor = valor.strftime("%d/%m/%Y %H:%M:%S") if isinstance(valor, datetime) else valor.strftime("%d/%m/%Y")
+
+                linha.append(valor)
+
+            linhas.append(linha)
+
+        payload = {
+            "acao": "resultados",
+            "aba": ABA_RESULTADOS,
+            "gid": GID_RESULTADOS,
+            "colunas": colunas,
+            "resultados": [
+                {
+                    coluna: linha[posicao]
+                    for posicao, coluna in enumerate(colunas)
+                }
+                for linha in linhas
+            ]
+        }
+
+        corpo = json.dumps(
+            payload,
+            ensure_ascii=False,
+            default=str,
+            allow_nan=False
+        )
+
+        print(f"✓ JSON preparado: {len(corpo)} bytes")
+        print(f"✓ GID destino: {GID_RESULTADOS}")
+        print(f"✓ Aba destino: {ABA_RESULTADOS}")
+
+        if linhas:
+            print("\n✓ PRIMEIRA LINHA ENVIADA:")
+            for posicao, coluna in enumerate(colunas):
+                print(f"  {coluna}: {linhas[0][posicao]}")
+
+    except Exception as erro:
+        print(f"❌ ERRO AO PREPARAR RESULTADOS: {erro}")
+        import traceback
+        traceback.print_exc()
+        return False
+
+    # ----------------------------------------------------------
+    # ENVIO COM RETRY
+    # ----------------------------------------------------------
+    max_tentativas = 3
+    delay_inicial = 2
+
+    for tentativa in range(1, max_tentativas + 1):
+        print(f"\n📤 Tentativa {tentativa}/{max_tentativas}...")
+
+        try:
+            response = requests.post(
+                GOOGLE_SCRIPT_URL,
+                data=corpo.encode("utf-8"),
+                headers={
+                    "Content-Type": "application/json; charset=utf-8",
+                    "Accept": "application/json"
+                },
+                timeout=60,
+                allow_redirects=True
+            )
+
+            print(f"✓ Status HTTP: {response.status_code}")
+
+            if response.status_code not in (200, 201):
+                print("❌ Status HTTP inesperado:")
+                print(response.text[:3000])
+
+                if tentativa < max_tentativas:
+                    espera = delay_inicial * (2 ** (tentativa - 1))
+                    print(f"⏳ Aguardando {espera}s...")
+                    time.sleep(espera)
+                    continue
+
+                return False
+
+            try:
+                resposta = response.json()
+            except ValueError:
+                print("❌ Apps Script não retornou JSON válido.")
+                print(response.text[:3000])
+
+                if tentativa < max_tentativas:
+                    espera = delay_inicial * (2 ** (tentativa - 1))
+                    time.sleep(espera)
+                    continue
+
+                return False
+
+            print("✓ Resposta do Apps Script:")
+            print(json.dumps(resposta, ensure_ascii=False, indent=2, default=str))
+
+            if not resposta.get("success", False):
+                print(
+                    "❌ Apps Script informou erro: "
+                    + str(resposta.get("erro", "Erro desconhecido."))
+                )
+
+                if tentativa < max_tentativas:
+                    espera = delay_inicial * (2 ** (tentativa - 1))
+                    print(f"⏳ Aguardando {espera}s...")
+                    time.sleep(espera)
+                    continue
+
+                return False
+
+            quantidade = resposta.get("quantidade", 0)
+
+            if quantidade != len(df):
+                print(
+                    f"⚠ ATENÇÃO: enviados {len(df)}, "
+                    f"mas Apps Script informou {quantidade}."
+                )
+                return False
+
+            print("\n" + "=" * 70)
+            print("✅ DADOS DO EXCEL GRAVADOS NO GOOGLE SHEETS")
+            print("=" * 70)
+            print(f"✓ Registros: {quantidade}")
+            print(f"✓ Aba: {ABA_RESULTADOS}")
+            print(f"✓ GID: {GID_RESULTADOS}")
+
+            return True
+
+        except requests.exceptions.Timeout as erro:
+            print(f"❌ TIMEOUT: {erro}")
+        except requests.exceptions.ConnectionError as erro:
+            print(f"❌ ERRO DE CONEXÃO: {erro}")
+        except requests.exceptions.RequestException as erro:
+            print(f"❌ ERRO HTTP: {erro}")
+        except Exception as erro:
+            print(f"❌ ERRO INESPERADO: {erro}")
+            import traceback
+            traceback.print_exc()
+
+        if tentativa < max_tentativas:
+            espera = delay_inicial * (2 ** (tentativa - 1))
+            print(f"⏳ Aguardando {espera}s antes da próxima tentativa...")
+            time.sleep(espera)
+
+    print("❌ FALHA: máximo de tentativas atingido.")
+    return False
 
 
 # ============================================================
@@ -6838,18 +6596,16 @@ def gerar_unificado_desvios():
     )
 
     # ========================================================
-    # ENVIAR RESULTADOS PARA O GOOGLE SHEETS
+    # GOOGLE SHEETS
+    # Envia exatamente o mesmo DataFrame usado no Excel.
     # ========================================================
 
     enviado = enviar_resultados_google_sheets(final)
 
     if enviado:
-        print("✓ Dados enviados para a aba RESULTADOS.")
+        print("✓ O Google Sheets recebeu os mesmos dados do Excel.")
     else:
-        print(
-            "⚠ O unificado foi gerado, mas o envio ao "
-            "Google Sheets falhou."
-        )
+        print("⚠ O Excel foi gerado, mas o envio para RESULTADOS falhou.")
 
     return ARQUIVO_UNIFICADO
 
@@ -6986,6 +6742,7 @@ def main():
             fim
         )
 
+        # Gera o Excel e envia o MESMO DataFrame para RESULTADOS.
         gerar_unificado_desvios()
 
         # ====================================================
