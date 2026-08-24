@@ -1,5 +1,3 @@
-
-
 import os
 import re
 import time
@@ -44,16 +42,6 @@ URL_RELATORIO_POSICAO = (
     "https://www.autovision.com.br/v3/"
     "modulos/relatorios/"
     "relatorio_posicao.php"
-)
-
-
-# ============================================================
-# GOOGLE APPS SCRIPT - ENVIO DE RESULTADOS
-# ============================================================
-
-GOOGLE_SCRIPT_URL = os.environ.get(
-    "GOOGLE_SCRIPT_URL",
-    "https://script.google.com/macros/s/AKfycbxREO251djkCbe1HKo8wIxDhXM9CVeaBsMF3lzphYDTjM0272WTzne3PnFoMl9sUNWRhw/exec"
 )
 
 
@@ -6468,29 +6456,7 @@ def main():
             fim
         )
 
-        arquivo_unificado = gerar_unificado_desvios()
-
-        # ====================================================
-        # ENVIO PARA O GOOGLE SHEETS
-        # ====================================================
-
-        try:
-
-            df_resultados = pd.read_excel(
-                arquivo_unificado,
-                sheet_name="Desvios"
-            )
-
-            enviar_resultados_google_sheets(
-                df_resultados
-            )
-
-        except Exception as erro_envio:
-
-            print(
-                f"⚠ Erro ao enviar resultados para o "
-                f"Google Sheets: {erro_envio}"
-            )
+        gerar_unificado_desvios()
 
         # ====================================================
         # FINAL
@@ -6566,327 +6532,6 @@ def main():
             pass
 
 
-
-
-
-
-
-
-
-# ============================================================
-# ENVIO DOS RESULTADOS PARA O GOOGLE SHEETS
-# ============================================================
-
-def enviar_resultados_google_sheets(resultados):
-    """
-    Envia os resultados processados para o Google Apps Script,
-    que grava os dados na aba RESULTADOS.
-
-    CORREÇÃO IMPLEMENTADA:
-    - Conversão robusta de datas (NaT → string vazia)
-    - Validação de URL antes do envio
-    - Logs detalhados em cada etapa
-    - Tratamento específico de erros (não genérico)
-    - Retry automático com backoff exponencial
-    - Diagnóstico completo de falhas
-    - JSON serialization com fallback para str
-    """
-
-    print("\n" + "=" * 70)
-    print("ENVIANDO RESULTADOS PARA O GOOGLE SHEETS")
-    print("=" * 70)
-
-    # ============================================================
-    # VALIDAÇÃO PRÉ-ENVIO
-    # ============================================================
-
-    if not GOOGLE_SCRIPT_URL:
-        print("❌ ERRO: GOOGLE_SCRIPT_URL não configurada!")
-        return False
-
-    if not GOOGLE_SCRIPT_URL.startswith("https://"):
-        print(f"❌ ERRO: URL inválida: {GOOGLE_SCRIPT_URL}")
-        return False
-
-    print(f"✓ URL Apps Script: {GOOGLE_SCRIPT_URL[:80]}...")
-
-    # ============================================================
-    # PREPARAR DADOS
-    # ============================================================
-
-    try:
-
-        if isinstance(resultados, pd.DataFrame):
-
-            print(f"✓ DataFrame recebido com {len(resultados)} registros")
-
-            if resultados.empty:
-                print("⚠ DataFrame vazio - nenhum dado para enviar")
-                return False
-
-            df_envio = resultados.copy()
-
-            print("🔄 Convertendo colunas de data/hora...")
-
-            # CORREÇÃO PRINCIPAL: Converter TODAS as datas para string ANTES do JSON
-            for coluna in df_envio.columns:
-
-                try:
-
-                    if pd.api.types.is_datetime64_any_dtype(df_envio[coluna]):
-
-                        # Trata NaT, NaN e valores válidos
-                        df_envio[coluna] = df_envio[coluna].dt.strftime(
-                            "%d/%m/%Y %H:%M:%S"
-                        )
-
-                        print(f"  ✓ {coluna}: convertida para formato dd/mm/yyyy hh:mm:ss")
-
-                except Exception as e_conv:
-
-                    print(f"  ⚠ Erro ao converter {coluna}: {e_conv}")
-                    continue
-
-            # Substituir NaN/NaT por strings vazias
-            df_envio = df_envio.astype(object).where(
-                pd.notnull(df_envio),
-                ""
-            )
-
-            print("✓ NaN/NaT convertidos para strings vazias")
-
-            # Converter para dicionários
-            dados = df_envio.to_dict(orient="records")
-
-            print(f"✓ {len(dados)} registros preparados para envio")
-
-        else:
-
-            print("⚠ Tipo de dado desconhecido, tentando usar como está")
-            dados = resultados
-
-    except Exception as e_prep:
-
-        print(f"❌ ERRO ao preparar dados: {e_prep}")
-        import traceback
-        traceback.print_exc()
-        return False
-
-    # ============================================================
-    # SERIALIZAÇÃO JSON
-    # ============================================================
-
-    try:
-
-        payload = {
-            "acao": "resultados",
-            "resultados": dados
-        }
-
-        # default=str funciona como rede de segurança: qualquer objeto
-        # não serializável (Decimal, numpy types, pd.NA residual, etc.)
-        # vira texto em vez de derrubar o envio inteiro.
-        corpo = json.dumps(
-            payload,
-            default=str,
-            ensure_ascii=False
-        )
-
-        print(f"✓ JSON serializado: {len(corpo)} bytes")
-
-    except Exception as e_json:
-
-        print(f"❌ ERRO ao serializar JSON: {e_json}")
-        import traceback
-        traceback.print_exc()
-        return False
-
-    # ============================================================
-    # ENVIO COM RETRY
-    # ============================================================
-
-    max_tentativas = 3
-    delay_inicial = 2  # segundos
-
-    for tentativa in range(1, max_tentativas + 1):
-
-        print(f"\n📤 Tentativa {tentativa}/{max_tentativas}...")
-
-        try:
-
-            response = requests.post(
-                GOOGLE_SCRIPT_URL,
-                data=corpo.encode("utf-8"),
-                headers={
-                    "Content-Type": "application/json; charset=utf-8"
-                },
-                timeout=60
-            )
-
-            print(f"✓ Resposta HTTP: {response.status_code}")
-
-            # Validar status HTTP
-            if response.status_code not in [200, 201]:
-
-                print(f"⚠ Status HTTP inesperado: {response.status_code}")
-
-                if tentativa < max_tentativas:
-
-                    espera = delay_inicial * (2 ** (tentativa - 1))
-                    print(f"⏳ Aguardando {espera}s antes de tentar novamente...")
-                    time.sleep(espera)
-                    continue
-
-                else:
-
-                    return False
-
-            # ====================================================
-            # PROCESSAR RESPOSTA
-            # ====================================================
-
-            try:
-
-                resultado_json = response.json()
-
-                print(f"✓ Resposta JSON válida")
-
-            except json.JSONDecodeError as e_json_resp:
-
-                print(f"❌ ERRO: Response não é JSON válido")
-                print(f"   Status: {response.status_code}")
-                print(f"   Conteúdo: {response.text[:200]}")
-                print(f"   Erro: {e_json_resp}")
-
-                if tentativa < max_tentativas:
-
-                    espera = delay_inicial * (2 ** (tentativa - 1))
-                    print(f"⏳ Aguardando {espera}s antes de tentar novamente...")
-                    time.sleep(espera)
-                    continue
-
-                else:
-
-                    return False
-
-            # ====================================================
-            # VALIDAR SUCESSO
-            # ====================================================
-
-            sucesso = resultado_json.get("success", False)
-
-            if not sucesso:
-
-                erro_msg = resultado_json.get("erro", "Erro desconhecido")
-
-                print(f"❌ Apps Script retornou erro:")
-                print(f"   {erro_msg}")
-
-                if tentativa < max_tentativas:
-
-                    espera = delay_inicial * (2 ** (tentativa - 1))
-                    print(f"⏳ Aguardando {espera}s antes de tentar novamente...")
-                    time.sleep(espera)
-                    continue
-
-                else:
-
-                    return False
-
-            # ====================================================
-            # SUCESSO!
-            # ====================================================
-
-            quantidade = resultado_json.get("quantidade", 0)
-
-            print()
-            print("=" * 70)
-            print("✅ RESULTADOS ENVIADOS COM SUCESSO!")
-            print("=" * 70)
-
-            print(f"✓ Registros gravados: {quantidade}")
-
-            if "mensagem" in resultado_json:
-                print(f"✓ Mensagem: {resultado_json['mensagem']}")
-
-            return True
-
-        except requests.exceptions.Timeout as e_timeout:
-
-            print(f"❌ TIMEOUT: Conexão expirou ({e_timeout})")
-
-            if tentativa < max_tentativas:
-
-                espera = delay_inicial * (2 ** (tentativa - 1))
-                print(f"⏳ Aguardando {espera}s antes de tentar novamente...")
-                time.sleep(espera)
-                continue
-
-            else:
-
-                return False
-
-        except requests.exceptions.ConnectionError as e_conn:
-
-            print(f"❌ ERRO DE CONEXÃO: {e_conn}")
-
-            if tentativa < max_tentativas:
-
-                espera = delay_inicial * (2 ** (tentativa - 1))
-                print(f"⏳ Aguardando {espera}s antes de tentar novamente...")
-                time.sleep(espera)
-                continue
-
-            else:
-
-                return False
-
-        except requests.exceptions.RequestException as e_req:
-
-            print(f"❌ ERRO HTTP: {e_req}")
-
-            if tentativa < max_tentativas:
-
-                espera = delay_inicial * (2 ** (tentativa - 1))
-                print(f"⏳ Aguardando {espera}s antes de tentar novamente...")
-                time.sleep(espera)
-                continue
-
-            else:
-
-                return False
-
-        except Exception as e_geral:
-
-            print(f"❌ ERRO INESPERADO: {e_geral}")
-            import traceback
-            traceback.print_exc()
-
-            if tentativa < max_tentativas:
-
-                espera = delay_inicial * (2 ** (tentativa - 1))
-                print(f"⏳ Aguardando {espera}s antes de tentar novamente...")
-                time.sleep(espera)
-                continue
-
-            else:
-
-                return False
-
-    # Nunca deveria chegar aqui, mas por segurança:
-    print("\n❌ FALHA: Máximo de tentativas atingido")
-    return False
-
-
-
-
-
-
-
-
-
-
-
 # ============================================================
 # EXECUTAR
 # ============================================================
@@ -6894,3 +6539,17 @@ def enviar_resultados_google_sheets(resultados):
 if __name__ == "__main__":
 
     main()
+
+
+
+
+
+
+
+
+
+
+
+
+
+
