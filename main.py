@@ -74,9 +74,7 @@ URL_ABASTECIMENTO_EDIT = (
 # ============================================================
 
 URL_TELEMETRIA_OCIOSIDADE = (
-    "https://docs.google.com/spreadsheets/d/e/"
-    "2PACX-1vQU22jWG-2LuGLDuLYvVQoBbv5JdArq9WUwGcJ3znHPZWHrFABji3IFNFwYCtVX7u8uo-Rd7YJFb9fZ/"
-    "pub?gid=756259345&single=true&output=csv"
+    "https://docs.google.com/spreadsheets/d/e/2PACX-1vQU22jWG-2LuGLDuLYvVQoBbv5JdArq9WUwGcJ3znHPZWHrFABji3IFNFwYCtVX7u8uo-Rd7YJFb9fZ/pub?output=csv"
 )
 
 URL_TELEMETRIA_OCIOSIDADE_EDIT = (
