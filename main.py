@@ -4,6 +4,7 @@ import time
 import shutil
 import unicodedata
 import math
+import json
 import requests
 from pathlib import Path
 from datetime import datetime, timedelta, date
@@ -6574,6 +6575,11 @@ def enviar_resultados_google_sheets(resultados):
     """
     Envia os resultados processados para o Google Apps Script,
     que grava os dados na aba RESULTADOS.
+
+    CORREÇÃO: colunas de data/hora (Timestamp/NaT) não são
+    serializáveis em JSON pelo encoder padrão. Antes elas
+    quebravam o envio silenciosamente (o erro caía no except
+    genérico e a aba RESULTADOS nunca era preenchida).
     """
 
     print("\n" + "=" * 60)
@@ -6581,13 +6587,35 @@ def enviar_resultados_google_sheets(resultados):
     print("=" * 60)
 
     try:
-        # URL do seu Web App do Google Apps Script
+        # URL do Web App do Google Apps Script
         url = GOOGLE_SCRIPT_URL
 
-        # Converte DataFrame para lista de dicionários
         if isinstance(resultados, pd.DataFrame):
-            dados = resultados.fillna("").to_dict(orient="records")
+
+            df_envio = resultados.copy()
+
+            # Converte colunas de data/hora para texto ANTES do
+            # to_dict, senão viram objetos Timestamp/NaT não
+            # serializáveis em JSON.
+            for coluna in df_envio.columns:
+
+                if pd.api.types.is_datetime64_any_dtype(
+                    df_envio[coluna]
+                ):
+
+                    df_envio[coluna] = df_envio[coluna].dt.strftime(
+                        "%d/%m/%Y %H:%M:%S"
+                    )
+
+            dados = (
+                df_envio
+                .astype(object)
+                .where(pd.notnull(df_envio), "")
+                .to_dict(orient="records")
+            )
+
         else:
+
             dados = resultados
 
         payload = {
@@ -6595,45 +6623,71 @@ def enviar_resultados_google_sheets(resultados):
             "resultados": dados
         }
 
+        # default=str funciona como rede de segurança: qualquer
+        # objeto ainda não serializável (Decimal, numpy types,
+        # pd.NA residual, etc.) vira texto em vez de derrubar
+        # o envio inteiro.
+        corpo = json.dumps(
+            payload,
+            default=str,
+            ensure_ascii=False
+        )
+
         response = requests.post(
             url,
-            json=payload,
+            data=corpo.encode("utf-8"),
+            headers={
+                "Content-Type": "application/json"
+            },
             timeout=60
         )
 
         response.raise_for_status()
 
-        print("\nRESULTADOS ENVIADOS COM SUCESSO!")
-        print(response.text)
+        resultado_json = response.json()
+
+        if not resultado_json.get("success", False):
+
+            print(
+                "\n⚠ O Apps Script respondeu com erro:"
+            )
+
+            print(
+                resultado_json.get("erro")
+            )
+
+            return False
+
+        print(
+            "\n✅ RESULTADOS ENVIADOS COM SUCESSO!"
+        )
+
+        print(
+            f"   Quantidade gravada: "
+            f"{resultado_json.get('quantidade')}"
+        )
 
         return True
 
     except requests.exceptions.RequestException as e:
-        print("\nERRO DE COMUNICAÇÃO:")
+
+        print(
+            "\n❌ ERRO DE COMUNICAÇÃO:"
+        )
+
         print(e)
 
         return False
 
     except Exception as e:
-        print("\nERRO AO ENVIAR RESULTADOS:")
+
+        print(
+            "\n❌ ERRO AO ENVIAR RESULTADOS:"
+        )
+
         print(e)
 
         return False
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 # ============================================================
