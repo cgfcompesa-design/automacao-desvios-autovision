@@ -45,6 +45,16 @@ URL_RELATORIO_POSICAO = (
 )
 
 
+# ============================================================
+# GOOGLE APPS SCRIPT - ENVIO DE RESULTADOS
+# ============================================================
+
+GOOGLE_SCRIPT_URL = os.environ.get(
+    "GOOGLE_SCRIPT_URL",
+    "https://script.google.com/macros/s/AKfycbyc2E775gKXnk5xwMuRt5E3vx5o6I5M-HfLhis4sqkp_Hd2R7n99ZwPy5E7f38foZsslQ/exec"
+)
+
+
 
 # ============================================================
 # FONTE OFICIAL DE ABASTECIMENTO
@@ -6456,7 +6466,29 @@ def main():
             fim
         )
 
-        gerar_unificado_desvios()
+        arquivo_unificado = gerar_unificado_desvios()
+
+        # ====================================================
+        # ENVIO PARA O GOOGLE SHEETS
+        # ====================================================
+
+        try:
+
+            df_resultados = pd.read_excel(
+                arquivo_unificado,
+                sheet_name="Desvios"
+            )
+
+            enviar_resultados_google_sheets(
+                df_resultados
+            )
+
+        except Exception as erro_envio:
+
+            print(
+                f"⚠ Erro ao enviar resultados para o "
+                f"Google Sheets: {erro_envio}"
+            )
 
         # ====================================================
         # FINAL
@@ -6560,7 +6592,7 @@ def enviar_resultados_google_sheets(resultados):
 
         payload = {
             "acao": "resultados",
-            "dados": dados
+            "resultados": dados
         }
 
         response = requests.post(
