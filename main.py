@@ -110,7 +110,6 @@ ABA_RESULTADOS = "RESULTADOS"
 # Endpoint de escrita. O Apps Script deve estar publicado como
 # Aplicativo da Web e ter acesso à planilha de destino.
 
-
 GOOGLE_SCRIPT_URL = (
     "https://script.google.com/macros/s/"
     "AKfycbwVgLOtn5n92eCZchaKo9naF_ix0lmjzcwNdm-HQafSOH48ZcMrCf9_MyfDHsAwp14"
