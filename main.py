@@ -111,7 +111,7 @@ ABA_RESULTADOS = "RESULTADOS"
 # Aplicativo da Web e ter acesso à planilha de destino.
 GOOGLE_SCRIPT_URL = (
     "https://script.google.com/macros/s/"
-    "AKfycbxREO251djkCbe1HKo8wIxDhXM9CVeaBsMF3lzphYDTjM0272WTzne3PnFoMl9sUNWRhw"
+    "AKfycbwVgLOtn5n92eCZchaKo9naF_ix0lmjzcwNdm-HQafSOH48ZcMrCf9_MyfDHsAwp14"
     "/exec"
 )
 
@@ -469,7 +469,7 @@ USUARIO = os.environ.get(
 
 SENHA = os.environ.get(
     "AUTOVISION_SENHA",
-    "20245"
+    "20005"
 )
 
 
@@ -6242,138 +6242,107 @@ def formatar_excel(
 # ENVIAR EXATAMENTE OS DADOS DO EXCEL PARA O GOOGLE SHEETS
 # ============================================================
 
+def preparar_valor_json(valor):
+    """Converte recursivamente valores para tipos compatíveis com JSON."""
+    if valor is None:
+        return ""
+
+    if isinstance(valor, pd.Timestamp):
+        if pd.isna(valor):
+            return ""
+        return valor.strftime("%d/%m/%Y %H:%M:%S")
+
+    if isinstance(valor, datetime):
+        return valor.strftime("%d/%m/%Y %H:%M:%S")
+
+    if isinstance(valor, date):
+        return valor.strftime("%d/%m/%Y")
+
+    if isinstance(valor, dict):
+        return {str(k): preparar_valor_json(v) for k, v in valor.items()}
+
+    if isinstance(valor, (list, tuple)):
+        return [preparar_valor_json(v) for v in valor]
+
+    try:
+        if pd.isna(valor):
+            return ""
+    except Exception:
+        pass
+
+    if hasattr(valor, "item"):
+        try:
+            return preparar_valor_json(valor.item())
+        except Exception:
+            pass
+
+    return valor
+
+
+# ============================================================
+# ENVIAR EXATAMENTE OS DADOS DO EXCEL PARA O GOOGLE SHEETS
+# ============================================================
+
 def enviar_resultados_google_sheets(df):
     """
-    Envia para o Apps Script exatamente o mesmo DataFrame usado
-    para gerar o arquivo unificado_desvios.xlsx.
-
-    IMPORTANTE:
-    - A ordem das colunas é preservada exatamente como no Excel.
-    - Os valores são enviados exatamente na mesma ordem das linhas.
-    - Datas são convertidas para texto no mesmo formato exibido no Excel.
-    - O GID da aba RESULTADOS é enviado junto no payload.
+    Envia exatamente o DataFrame usado para gerar o Excel unificado
+    ao Apps Script, que acrescenta os registros na aba RESULTADOS.
     """
 
     print("\n" + "=" * 70)
-    print("ENVIANDO EXATAMENTE O EXCEL PARA O GOOGLE SHEETS")
+    print("ENVIANDO RESULTADOS PARA O GOOGLE SHEETS")
     print("=" * 70)
 
     if not isinstance(df, pd.DataFrame):
         print("❌ ERRO: o objeto enviado não é um DataFrame.")
         return False
 
-    if not GOOGLE_SCRIPT_URL:
-        print("❌ ERRO: GOOGLE_SCRIPT_URL não configurada.")
-        return False
+    if df.empty:
+        print("⚠ DataFrame vazio - nenhum dado para enviar.")
+        return True
 
-    if not GOOGLE_SCRIPT_URL.startswith("https://"):
-        print(f"❌ ERRO: URL inválida: {GOOGLE_SCRIPT_URL}")
+    if not GOOGLE_SCRIPT_URL or not GOOGLE_SCRIPT_URL.startswith("https://"):
+        print(f"❌ ERRO: GOOGLE_SCRIPT_URL inválida: {GOOGLE_SCRIPT_URL}")
         return False
 
     try:
-        # ------------------------------------------------------
-        # COPIA SEM ALTERAR O DATAFRAME ORIGINAL
-        # ------------------------------------------------------
-        envio = df.copy()
+        print(f"✓ DataFrame recebido com {len(df)} registros")
 
-        # Esta é a ordem que o pandas usa para gerar o Excel.
-        colunas = list(envio.columns)
+        # Mantém exatamente as mesmas colunas e a mesma ordem do Excel.
+        df_envio = df.copy()
+        df_envio.columns = [str(coluna) for coluna in df_envio.columns]
+        colunas = list(df_envio.columns)
 
-        print(f"✓ Registros: {len(envio)}")
-        print(f"✓ Colunas: {len(colunas)}")
-        print("\n✓ ORDEM EXATA DAS COLUNAS DO EXCEL:")
-        for i, coluna in enumerate(colunas, start=1):
-            print(f"  {i:02d}. {coluna}")
-
-        # ------------------------------------------------------
-        # CONVERSÃO DE DATAS
-        # ------------------------------------------------------
-        for coluna in envio.columns:
-            serie = envio[coluna]
-
-            try:
-                if pd.api.types.is_datetime64_any_dtype(serie):
-                    envio[coluna] = serie.dt.strftime("%d/%m/%Y %H:%M:%S")
-                elif pd.api.types.is_object_dtype(serie):
-                    # Preserva datas Python/date/datetime que possam estar
-                    # misturadas em colunas object.
-                    envio[coluna] = serie.map(
-                        lambda valor: (
-                            valor.strftime("%d/%m/%Y %H:%M:%S")
-                            if isinstance(valor, datetime)
-                            else (
-                                valor.strftime("%d/%m/%Y")
-                                if isinstance(valor, date)
-                                else valor
-                            )
-                        )
-                    )
-            except Exception as erro_data:
-                print(f"⚠ Erro convertendo coluna {coluna}: {erro_data}")
-
-        # ------------------------------------------------------
-        # NaN / NaT / pd.NA -> vazio
-        # ------------------------------------------------------
-        envio = envio.astype(object).where(pd.notnull(envio), "")
-
-        # ------------------------------------------------------
-        # CONSTRUIR LINHAS PRESERVANDO A MESMA ORDEM DO EXCEL
-        # ------------------------------------------------------
-        linhas = []
-
-        for _, registro in envio.iterrows():
-            linha = []
-
-            for coluna in colunas:
-                valor = registro[coluna]
-
-                if valor is None or pd.isna(valor):
-                    valor = ""
-
-                # Tipos numpy/objetos precisam ser convertidos para tipos
-                # básicos para o JSON.
-                if hasattr(valor, "item"):
-                    try:
-                        valor = valor.item()
-                    except Exception:
-                        pass
-
-                if isinstance(valor, (datetime, date)):
-                    valor = valor.strftime("%d/%m/%Y %H:%M:%S") if isinstance(valor, datetime) else valor.strftime("%d/%m/%Y")
-
-                linha.append(valor)
-
-            linhas.append(linha)
+        # Cada linha do Excel/DataFrame vira um objeto da matriz resultados.
+        resultados = []
+        for _, linha in df_envio.iterrows():
+            registro = {
+                coluna: preparar_valor_json(linha[coluna])
+                for coluna in colunas
+            }
+            resultados.append(registro)
 
         payload = {
             "acao": "resultados",
-            "aba": ABA_RESULTADOS,
-            "gid": GID_RESULTADOS,
-            "colunas": colunas,
-            "resultados": [
-                {
-                    coluna: linha[posicao]
-                    for posicao, coluna in enumerate(colunas)
-                }
-                for linha in linhas
-            ]
+            "resultados": resultados,
         }
 
+        # Validação final: garante que não restou datetime/Timestamp/NaN.
+        payload = preparar_valor_json(payload)
         corpo = json.dumps(
             payload,
             ensure_ascii=False,
-            default=str,
-            allow_nan=False
+            allow_nan=False,
         )
 
-        print(f"✓ JSON preparado: {len(corpo)} bytes")
-        print(f"✓ GID destino: {GID_RESULTADOS}")
+        print(f"✓ Registros preparados: {len(resultados)}")
+        print(f"✓ Colunas preparadas: {len(colunas)}")
+        print(f"✓ JSON preparado: {len(corpo.encode('utf-8'))} bytes")
         print(f"✓ Aba destino: {ABA_RESULTADOS}")
 
-        if linhas:
-            print("\n✓ PRIMEIRA LINHA ENVIADA:")
-            for posicao, coluna in enumerate(colunas):
-                print(f"  {coluna}: {linhas[0][posicao]}")
+        if resultados:
+            print("\n✓ PRIMEIRO REGISTRO QUE SERÁ ENVIADO:")
+            print(json.dumps(resultados[0], ensure_ascii=False, indent=2))
 
     except Exception as erro:
         print(f"❌ ERRO AO PREPARAR RESULTADOS: {erro}")
@@ -6381,9 +6350,6 @@ def enviar_resultados_google_sheets(df):
         traceback.print_exc()
         return False
 
-    # ----------------------------------------------------------
-    # ENVIO COM RETRY
-    # ----------------------------------------------------------
     max_tentativas = 3
     delay_inicial = 2
 
@@ -6396,91 +6362,65 @@ def enviar_resultados_google_sheets(df):
                 data=corpo.encode("utf-8"),
                 headers={
                     "Content-Type": "application/json; charset=utf-8",
-                    "Accept": "application/json"
+                    "Accept": "application/json",
                 },
                 timeout=60,
-                allow_redirects=True
+                allow_redirects=True,
             )
 
             print(f"✓ Status HTTP: {response.status_code}")
 
             if response.status_code not in (200, 201):
-                print("❌ Status HTTP inesperado:")
-                print(response.text[:3000])
-
-                if tentativa < max_tentativas:
-                    espera = delay_inicial * (2 ** (tentativa - 1))
-                    print(f"⏳ Aguardando {espera}s...")
-                    time.sleep(espera)
-                    continue
-
-                return False
+                raise requests.exceptions.HTTPError(
+                    f"Status HTTP {response.status_code}: {response.text[:1000]}"
+                )
 
             try:
                 resposta = response.json()
-            except ValueError:
+            except ValueError as erro_json:
                 print("❌ Apps Script não retornou JSON válido.")
                 print(response.text[:3000])
-
-                if tentativa < max_tentativas:
-                    espera = delay_inicial * (2 ** (tentativa - 1))
-                    time.sleep(espera)
-                    continue
-
-                return False
+                raise RuntimeError(str(erro_json))
 
             print("✓ Resposta do Apps Script:")
-            print(json.dumps(resposta, ensure_ascii=False, indent=2, default=str))
+            print(json.dumps(resposta, ensure_ascii=False, indent=2))
 
             if not resposta.get("success", False):
-                print(
-                    "❌ Apps Script informou erro: "
-                    + str(resposta.get("erro", "Erro desconhecido."))
+                raise RuntimeError(
+                    "Apps Script retornou erro: "
+                    + str(resposta.get("erro", "Erro desconhecido"))
                 )
-
-                if tentativa < max_tentativas:
-                    espera = delay_inicial * (2 ** (tentativa - 1))
-                    print(f"⏳ Aguardando {espera}s...")
-                    time.sleep(espera)
-                    continue
-
-                return False
 
             quantidade = resposta.get("quantidade", 0)
 
-            if quantidade != len(df):
+            if quantidade != len(resultados):
                 print(
-                    f"⚠ ATENÇÃO: enviados {len(df)}, "
+                    f"⚠ ATENÇÃO: enviados {len(resultados)}, "
                     f"mas Apps Script informou {quantidade}."
                 )
                 return False
 
             print("\n" + "=" * 70)
-            print("✅ DADOS DO EXCEL GRAVADOS NO GOOGLE SHEETS")
+            print("✅ ENVIO CONCLUÍDO")
             print("=" * 70)
-            print(f"✓ Registros: {quantidade}")
-            print(f"✓ Aba: {ABA_RESULTADOS}")
-            print(f"✓ GID: {GID_RESULTADOS}")
+            print(f"✓ Registros enviados: {len(resultados)}")
+            print(f"✓ Registros gravados: {quantidade}")
+            print(f"✓ Aba destino: {ABA_RESULTADOS}")
+            print("=" * 70)
 
             return True
 
-        except requests.exceptions.Timeout as erro:
-            print(f"❌ TIMEOUT: {erro}")
-        except requests.exceptions.ConnectionError as erro:
-            print(f"❌ ERRO DE CONEXÃO: {erro}")
-        except requests.exceptions.RequestException as erro:
-            print(f"❌ ERRO HTTP: {erro}")
         except Exception as erro:
-            print(f"❌ ERRO INESPERADO: {erro}")
-            import traceback
-            traceback.print_exc()
+            print(f"❌ ERRO NA TENTATIVA {tentativa}: {erro}")
 
-        if tentativa < max_tentativas:
-            espera = delay_inicial * (2 ** (tentativa - 1))
-            print(f"⏳ Aguardando {espera}s antes da próxima tentativa...")
-            time.sleep(espera)
+            if tentativa < max_tentativas:
+                espera = delay_inicial * (2 ** (tentativa - 1))
+                print(f"⏳ Aguardando {espera}s antes de tentar novamente...")
+                time.sleep(espera)
+            else:
+                print("❌ FALHA: máximo de tentativas atingido.")
+                return False
 
-    print("❌ FALHA: máximo de tentativas atingido.")
     return False
 
 
