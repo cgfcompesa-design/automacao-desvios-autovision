@@ -113,7 +113,6 @@ ABA_RESULTADOS = "RESULTADOS"
 
 GOOGLE_SCRIPT_URL = (
     "https://script.google.com/macros/s/"
-    "AKfycbxREO251djkCbe1HKo8wIxDhXM9CVeaBsMF3lzphYDTjM0272WTzne3PnFoMl9sUNWRhw"
     "AKfycbwVgLOtn5n92eCZchaKo9naF_ix0lmjzcwNdm-HQafSOH48ZcMrCf9_MyfDHsAwp14"
     "/exec"
 )
