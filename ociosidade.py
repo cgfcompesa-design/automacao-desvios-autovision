@@ -94,191 +94,169 @@ def criar_driver():
 
 def fazer_login(driver):
 
-    print("
-" + "=" * 70)
+    print("\n" + "=" * 70)
     print("LOGIN AUTOVISION")
     print("=" * 70)
 
     if not USUARIO:
-        raise RuntimeError("AUTOVISION_USUARIO não configurado.")
+        raise RuntimeError(
+            "AUTOVISION_USUARIO não configurado."
+        )
 
     if not SENHA:
-        raise RuntimeError("AUTOVISION_SENHA não configurada.")
+        raise RuntimeError(
+            "AUTOVISION_SENHA não configurada."
+        )
 
-    driver.switch_to.default_content()
     driver.get(URL_LOGIN)
 
-    wait = WebDriverWait(driver, TIMEOUT)
+    wait = WebDriverWait(
+        driver,
+        TIMEOUT
+    )
 
     campo_usuario = wait.until(
-        EC.visibility_of_element_located((By.ID, "usuario"))
-    )
-    campo_usuario.clear()
-    campo_usuario.send_keys(USUARIO)
-
-    campo_senha = wait.until(
-        EC.visibility_of_element_located((By.ID, "senha"))
-    )
-    campo_senha.clear()
-    campo_senha.send_keys(SENHA)
-
-    botao_login = wait.until(
-        EC.element_to_be_clickable(
-            (By.CSS_SELECTOR, "button[type='submit']")
+        EC.visibility_of_element_located(
+            (By.ID, "usuario")
         )
     )
 
-    driver.execute_script("arguments[0].click();", botao_login)
+    campo_usuario.clear()
+
+    campo_usuario.send_keys(
+        USUARIO
+    )
+
+    campo_senha = wait.until(
+        EC.visibility_of_element_located(
+            (By.ID, "senha")
+        )
+    )
+
+    campo_senha.clear()
+
+    campo_senha.send_keys(
+        SENHA
+    )
+
+    botao_login = wait.until(
+        EC.element_to_be_clickable(
+            (
+                By.CSS_SELECTOR,
+                "button[type='submit']"
+            )
+        )
+    )
+
+    driver.execute_script(
+        "arguments[0].click();",
+        botao_login
+    )
 
     print("Login enviado...")
 
     try:
+
         wait.until(
-            lambda d: len(d.find_elements(By.ID, "usuario")) == 0
-        )
-
-        print("Aguardando carregamento do sistema...")
-        time.sleep(5)
-
-        WebDriverWait(driver, TIMEOUT).until(
-            lambda d: d.execute_script(
-                "return document.readyState"
-            ) == "complete"
+            lambda d: len(
+                d.find_elements(
+                    By.ID,
+                    "usuario"
+                )
+            ) == 0
         )
 
     except TimeoutException:
+
         raise RuntimeError(
-            "Login não concluído ou página não terminou de carregar."
+            "Login não concluído."
         )
 
     print("✓ Login concluído.")
-    print(f"URL após login: {driver.current_url}")
 
+
+# ============================================================
+# ACESSAR RELATÓRIO OCIOSIDADE
+# ============================================================
 
 def acessar_ociosidade(driver):
 
-    print("
-" + "=" * 70)
+    print("\n" + "=" * 70)
     print("ACESSANDO RELATÓRIO DE OCIOSIDADE")
     print("=" * 70)
 
-    driver.switch_to.default_content()
-
-    print("Aguardando AutoVision carregar...")
-    time.sleep(5)
-
-    acessou = False
-
-    seletores = [
-        'a[href*="relatorio_ociosidade.php"]',
-        'a[href*="relatorio_ociosidade"]',
-        'a[href*="ociosidade"]',
-    ]
-
-    print("Tentativa 1: procurando link de Ociosidade...")
-
-    try:
-        for seletor in seletores:
-            elementos = driver.find_elements(
-                By.CSS_SELECTOR,
-                seletor
-            )
-
-            if elementos:
-                print(f"✓ Link encontrado: {seletor}")
-
-                driver.execute_script(
-                    "arguments[0].click();",
-                    elementos[0]
-                )
-
-                acessou = True
-                time.sleep(5)
-                break
-
-    except Exception as erro:
-        print(f"⚠ Erro ao procurar link: {erro}")
-
-    if not acessou:
-        print("Tentativa 2: acessando relatório diretamente...")
-
-        driver.switch_to.default_content()
-
-        driver.get(
-            "https://www.autovision.com.br/v3/"
-            "modulos/relatorios/"
-            "relatorio_ociosidade.php"
-        )
-
-        time.sleep(5)
-
-    driver.switch_to.default_content()
-
-    try:
-        print("Verificando página principal...")
-
-        WebDriverWait(driver, 20).until(
-            lambda d: len(
-                d.find_elements(By.ID, "data_inicial")
-            ) > 0
-        )
-
-        print("✓ Página de Ociosidade encontrada.")
-        return
-
-    except TimeoutException:
-        print("Campo não encontrado na página principal.")
-
-    driver.switch_to.default_content()
-
-    frames = driver.find_elements(By.TAG_NAME, "iframe")
-
-    print(f"Frames encontrados: {len(frames)}")
-
-    for indice, frame in enumerate(frames):
-        try:
-            driver.switch_to.default_content()
-            driver.switch_to.frame(frame)
-
-            print(f"Verificando iframe {indice + 1}...")
-
-            WebDriverWait(driver, 10).until(
-                lambda d: len(
-                    d.find_elements(By.ID, "data_inicial")
-                ) > 0
-            )
-
-            print(
-                f"✓ Página de Ociosidade encontrada "
-                f"no iframe {indice + 1}."
-            )
-
-            return
-
-        except TimeoutException:
-            continue
-
-        except Exception as erro:
-            print(
-                f"Erro no iframe {indice + 1}: {erro}"
-            )
-
-    driver.switch_to.default_content()
-
-    print("
-" + "=" * 70)
-    print("ERRO: PÁGINA DE OCIOSIDADE NÃO ENCONTRADA")
-    print("=" * 70)
-
-    print(f"URL atual: {driver.current_url}")
-    print(f"Título da página: {driver.title}")
-    print(f"Quantidade de iframes: {len(frames)}")
-
-    raise RuntimeError(
-        "Não foi possível localizar a página "
-        "ou os campos do relatório de Ociosidade."
+    wait = WebDriverWait(
+        driver,
+        TIMEOUT
     )
 
+    link = wait.until(
+        EC.presence_of_element_located(
+            (
+                By.CSS_SELECTOR,
+                'a[href="modulos/relatorios/relatorio_ociosidade.php"]'
+            )
+        )
+    )
+
+    driver.execute_script(
+        "arguments[0].click();",
+        link
+    )
+
+    time.sleep(3)
+
+    # Tenta encontrar o conteúdo dentro de iframe
+    frames = driver.find_elements(
+        By.TAG_NAME,
+        "iframe"
+    )
+
+    for frame in frames:
+
+        try:
+
+            driver.switch_to.default_content()
+
+            driver.switch_to.frame(
+                frame
+            )
+
+            if driver.find_elements(
+                By.ID,
+                "data_inicial"
+            ):
+
+                print(
+                    "✓ Página de Ociosidade encontrada."
+                )
+
+                return
+
+        except Exception:
+
+            pass
+
+    # Caso não esteja dentro de iframe
+    driver.switch_to.default_content()
+
+    wait.until(
+        EC.presence_of_element_located(
+            (
+                By.ID,
+                "data_inicial"
+            )
+        )
+    )
+
+    print(
+        "✓ Página de Ociosidade encontrada."
+    )
+
+
+# ============================================================
+# PREENCHER DATETIME
+# ============================================================
 
 def preencher_datetime(
     driver,
@@ -443,212 +421,104 @@ def gerar_relatorio(driver):
 
 def extrair_tabela(driver):
 
-    print("
-" + "=" * 70)
+    print("\n" + "=" * 70)
     print("EXTRAINDO DADOS DO RELATÓRIO")
     print("=" * 70)
-
-    # O relatório pode carregar lentamente e a tabela pode ser criada
-    # depois do clique em "Gerar relatório".
     print("Aguardando tabela do relatório...")
 
-    seletores_tabela = [
-        "//table[contains(@id, 'tabela_excel')]",
-        "//table[contains(@id, 'excel')]",
-        "//table",
-    ]
-
     tabela = None
-
-    # Aguarda até 120 segundos, verificando todos os seletores.
     fim = time.time() + 120
 
     while time.time() < fim:
+        tabelas = driver.find_elements(By.TAG_NAME, "table")
 
-        for seletor in seletores_tabela:
-
-            tabelas = driver.find_elements(
-                By.XPATH,
-                seletor
-            )
-
-            for item in tabelas:
-
-                try:
-
-                    if not item.is_displayed():
-                        continue
-
-                    linhas = item.find_elements(
-                        By.CSS_SELECTOR,
-                        "tbody tr"
-                    )
-
-                    if linhas:
-
-                        tabela = item
-                        break
-
-                except Exception:
-
+        for item in tabelas:
+            try:
+                if not item.is_displayed():
                     continue
 
-            if tabela is not None:
-                break
+                linhas = item.find_elements(By.CSS_SELECTOR, "tbody tr")
+
+                if not linhas:
+                    linhas = item.find_elements(By.CSS_SELECTOR, "tr")
+
+                if len(linhas) > 1:
+                    tabela = item
+                    break
+
+            except Exception:
+                continue
 
         if tabela is not None:
             break
 
         time.sleep(2)
 
-    # ------------------------------------------------------------
-    # SE NÃO ENCONTRAR, SALVA DIAGNÓSTICOS
-    # ------------------------------------------------------------
-
     if tabela is None:
-
-        print("⚠ Nenhuma tabela com linhas foi encontrada.")
+        print("Nenhuma tabela com dados foi encontrada.")
         print(f"URL atual: {driver.current_url}")
-        print(f"Título: {driver.title}")
+        print(f"Titulo: {driver.title}")
 
         try:
-            driver.save_screenshot(
-                "erro_relatorio_ociosidade.png"
-            )
-
-            print(
-                "✓ Screenshot salvo: "
-                "erro_relatorio_ociosidade.png"
-            )
-
+            driver.save_screenshot("erro_relatorio_ociosidade.png")
+            print("Screenshot salvo: erro_relatorio_ociosidade.png")
         except Exception as erro:
-            print(
-                f"Não foi possível salvar screenshot: {erro}"
-            )
+            print(f"Erro ao salvar screenshot: {erro}")
 
         try:
-
             with open(
                 "erro_relatorio_ociosidade.html",
                 "w",
                 encoding="utf-8"
             ) as arquivo:
+                arquivo.write(driver.page_source)
 
-                arquivo.write(
-                    driver.page_source
-                )
-
-            print(
-                "✓ HTML salvo: "
-                "erro_relatorio_ociosidade.html"
-            )
+            print("HTML salvo: erro_relatorio_ociosidade.html")
 
         except Exception as erro:
-            print(
-                f"Não foi possível salvar HTML: {erro}"
-            )
-
-        # Mostra todas as tabelas existentes para diagnóstico
-        todas_tabelas = driver.find_elements(
-            By.TAG_NAME,
-            "table"
-        )
-
-        print(
-            f"Total de tabelas encontradas: "
-            f"{len(todas_tabelas)}"
-        )
-
-        for indice, item in enumerate(
-            todas_tabelas[:10],
-            start=1
-        ):
-
-            try:
-
-                print(
-                    f"Tabela {indice}: "
-                    f"id='{item.get_attribute('id')}' "
-                    f"class='{item.get_attribute('class')}'"
-                )
-
-            except Exception:
-
-                pass
+            print(f"Erro ao salvar HTML: {erro}")
 
         raise TimeoutException(
             "A tabela do relatório não apareceu "
-            "com registros dentro de 120 segundos."
+            "com dados dentro de 120 segundos."
         )
 
-    # ------------------------------------------------------------
-    # EXTRAIR CABEÇALHOS
-    # ------------------------------------------------------------
-
     cabecalhos = [
-
         elemento.text.strip()
-
         for elemento in tabela.find_elements(
             By.CSS_SELECTOR,
             "thead th"
         )
-
         if elemento.text.strip()
     ]
 
-    # Caso não exista thead, tenta primeira linha
-    if not cabecalhos:
+    linhas = tabela.find_elements(By.CSS_SELECTOR, "tbody tr")
 
-        primeira_linha = tabela.find_elements(
-            By.CSS_SELECTOR,
-            "tr"
-        )
+    if not linhas:
+        todas_linhas = tabela.find_elements(By.CSS_SELECTOR, "tr")
 
-        if primeira_linha:
-
+        if not cabecalhos and todas_linhas:
             cabecalhos = [
-
                 elemento.text.strip()
-
-                for elemento in primeira_linha[0].find_elements(
+                for elemento in todas_linhas[0].find_elements(
                     By.CSS_SELECTOR,
                     "th, td"
                 )
-
             ]
+
+            linhas = todas_linhas[1:]
+
+        else:
+            linhas = todas_linhas
 
     print("Cabeçalhos encontrados:")
     print(cabecalhos)
 
     dados = []
 
-    linhas = tabela.find_elements(
-        By.CSS_SELECTOR,
-        "tbody tr"
-    )
-
-    # Caso a tabela não use tbody
-    if not linhas:
-
-        todas_linhas = tabela.find_elements(
-            By.CSS_SELECTOR,
-            "tr"
-        )
-
-        if cabecalhos and todas_linhas:
-            linhas = todas_linhas[1:]
-        else:
-            linhas = todas_linhas
-
     for linha in linhas:
-
         try:
-
-            colunas = linha.find_elements(
-                By.TAG_NAME,
-                "td"
-            )
+            colunas = linha.find_elements(By.TAG_NAME, "td")
 
             valores = [
                 coluna.text.strip()
@@ -659,23 +529,14 @@ def extrair_tabela(driver):
                 continue
 
             if cabecalhos:
-
-                # Se houver menos cabeçalhos que valores, cria nomes extras
                 while len(cabecalhos) < len(valores):
-
                     cabecalhos.append(
                         f"COLUNA_{len(cabecalhos) + 1}"
                     )
 
-                registro = dict(
-                    zip(
-                        cabecalhos,
-                        valores
-                    )
-                )
+                registro = dict(zip(cabecalhos, valores))
 
             else:
-
                 registro = {
                     f"COLUNA_{i + 1}": valor
                     for i, valor in enumerate(valores)
@@ -684,19 +545,13 @@ def extrair_tabela(driver):
             dados.append(registro)
 
         except Exception as erro:
-
-            print(
-                f"⚠ Erro ao ler uma linha: {erro}"
-            )
+            print(f"Erro ao ler linha: {erro}")
 
     df = pd.DataFrame(dados)
 
-    print(
-        f"✓ Registros encontrados: {len(df)}"
-    )
+    print(f"Registros encontrados: {len(df)}")
 
     return df
-
 
 def adicionar_data(df):
 
@@ -950,8 +805,8 @@ def executar():
             driver
         )
 
-        # A extração aguarda a tabela por até 120 segundos
-        time.sleep(2)
+        # Aguarda o AutoVision processar
+        time.sleep(5)
 
         # ----------------------------------------------------
         # EXTRAIR DADOS
