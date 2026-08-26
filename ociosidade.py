@@ -2,6 +2,7 @@
 import os
 import time
 import json
+import sys
 from datetime import datetime
 
 import pandas as pd
@@ -13,6 +14,17 @@ from selenium.webdriver.edge.options import Options
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException
+
+
+# ============================================================
+# CORRIGIR CODIFICAÇÃO DO CONSOLE
+# ============================================================
+
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
 
 # ============================================================
@@ -791,13 +803,13 @@ def executar():
             )
 
         print("\n" + "=" * 70)
-        print("✅ PROCESSO FINALIZADO COM SUCESSO")
+        print(" PROCESSO FINALIZADO COM SUCESSO")
         print("=" * 70)
 
     except Exception as erro:
 
         print("\n" + "=" * 70)
-        print("❌ ERRO NA AUTOMAÇÃO")
+        print(" ERRO NA AUTOMAÇÃO")
         print("=" * 70)
 
         print(
