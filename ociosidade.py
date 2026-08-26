@@ -443,45 +443,182 @@ def gerar_relatorio(driver):
 
 def extrair_tabela(driver):
 
-    print("\n" + "=" * 70)
+    print("
+" + "=" * 70)
     print("EXTRAINDO DADOS DO RELATÓRIO")
     print("=" * 70)
 
-    tabela = WebDriverWait(
-        driver,
-        TIMEOUT
-    ).until(
-        EC.presence_of_element_located(
-            (
-                By.XPATH,
-                "//table[contains(@id, 'tabela_excel')]"
-            )
-        )
-    )
+    # O relatório pode carregar lentamente e a tabela pode ser criada
+    # depois do clique em "Gerar relatório".
+    print("Aguardando tabela do relatório...")
 
-    # Aguarda até existir pelo menos uma linha
-    WebDriverWait(
-        driver,
-        TIMEOUT
-    ).until(
-        lambda d: len(
-            tabela.find_elements(
-                By.CSS_SELECTOR,
-                "tbody tr"
+    seletores_tabela = [
+        "//table[contains(@id, 'tabela_excel')]",
+        "//table[contains(@id, 'excel')]",
+        "//table",
+    ]
+
+    tabela = None
+
+    # Aguarda até 120 segundos, verificando todos os seletores.
+    fim = time.time() + 120
+
+    while time.time() < fim:
+
+        for seletor in seletores_tabela:
+
+            tabelas = driver.find_elements(
+                By.XPATH,
+                seletor
             )
-        ) > 0
-    )
+
+            for item in tabelas:
+
+                try:
+
+                    if not item.is_displayed():
+                        continue
+
+                    linhas = item.find_elements(
+                        By.CSS_SELECTOR,
+                        "tbody tr"
+                    )
+
+                    if linhas:
+
+                        tabela = item
+                        break
+
+                except Exception:
+
+                    continue
+
+            if tabela is not None:
+                break
+
+        if tabela is not None:
+            break
+
+        time.sleep(2)
+
+    # ------------------------------------------------------------
+    # SE NÃO ENCONTRAR, SALVA DIAGNÓSTICOS
+    # ------------------------------------------------------------
+
+    if tabela is None:
+
+        print("⚠ Nenhuma tabela com linhas foi encontrada.")
+        print(f"URL atual: {driver.current_url}")
+        print(f"Título: {driver.title}")
+
+        try:
+            driver.save_screenshot(
+                "erro_relatorio_ociosidade.png"
+            )
+
+            print(
+                "✓ Screenshot salvo: "
+                "erro_relatorio_ociosidade.png"
+            )
+
+        except Exception as erro:
+            print(
+                f"Não foi possível salvar screenshot: {erro}"
+            )
+
+        try:
+
+            with open(
+                "erro_relatorio_ociosidade.html",
+                "w",
+                encoding="utf-8"
+            ) as arquivo:
+
+                arquivo.write(
+                    driver.page_source
+                )
+
+            print(
+                "✓ HTML salvo: "
+                "erro_relatorio_ociosidade.html"
+            )
+
+        except Exception as erro:
+            print(
+                f"Não foi possível salvar HTML: {erro}"
+            )
+
+        # Mostra todas as tabelas existentes para diagnóstico
+        todas_tabelas = driver.find_elements(
+            By.TAG_NAME,
+            "table"
+        )
+
+        print(
+            f"Total de tabelas encontradas: "
+            f"{len(todas_tabelas)}"
+        )
+
+        for indice, item in enumerate(
+            todas_tabelas[:10],
+            start=1
+        ):
+
+            try:
+
+                print(
+                    f"Tabela {indice}: "
+                    f"id='{item.get_attribute('id')}' "
+                    f"class='{item.get_attribute('class')}'"
+                )
+
+            except Exception:
+
+                pass
+
+        raise TimeoutException(
+            "A tabela do relatório não apareceu "
+            "com registros dentro de 120 segundos."
+        )
+
+    # ------------------------------------------------------------
+    # EXTRAIR CABEÇALHOS
+    # ------------------------------------------------------------
 
     cabecalhos = [
+
         elemento.text.strip()
+
         for elemento in tabela.find_elements(
             By.CSS_SELECTOR,
             "thead th"
         )
+
+        if elemento.text.strip()
     ]
 
-    print("Cabeçalhos encontrados:")
+    # Caso não exista thead, tenta primeira linha
+    if not cabecalhos:
 
+        primeira_linha = tabela.find_elements(
+            By.CSS_SELECTOR,
+            "tr"
+        )
+
+        if primeira_linha:
+
+            cabecalhos = [
+
+                elemento.text.strip()
+
+                for elemento in primeira_linha[0].find_elements(
+                    By.CSS_SELECTOR,
+                    "th, td"
+                )
+
+            ]
+
+    print("Cabeçalhos encontrados:")
     print(cabecalhos)
 
     dados = []
@@ -491,34 +628,68 @@ def extrair_tabela(driver):
         "tbody tr"
     )
 
-    for linha in linhas:
+    # Caso a tabela não use tbody
+    if not linhas:
 
-        colunas = linha.find_elements(
-            By.TAG_NAME,
-            "td"
+        todas_linhas = tabela.find_elements(
+            By.CSS_SELECTOR,
+            "tr"
         )
 
-        valores = [
-            coluna.text.strip()
-            for coluna in colunas
-        ]
+        if cabecalhos and todas_linhas:
+            linhas = todas_linhas[1:]
+        else:
+            linhas = todas_linhas
 
-        if len(valores) == len(cabecalhos):
+    for linha in linhas:
 
-            registro = dict(
-                zip(
-                    cabecalhos,
-                    valores
+        try:
+
+            colunas = linha.find_elements(
+                By.TAG_NAME,
+                "td"
+            )
+
+            valores = [
+                coluna.text.strip()
+                for coluna in colunas
+            ]
+
+            if not valores:
+                continue
+
+            if cabecalhos:
+
+                # Se houver menos cabeçalhos que valores, cria nomes extras
+                while len(cabecalhos) < len(valores):
+
+                    cabecalhos.append(
+                        f"COLUNA_{len(cabecalhos) + 1}"
+                    )
+
+                registro = dict(
+                    zip(
+                        cabecalhos,
+                        valores
+                    )
                 )
+
+            else:
+
+                registro = {
+                    f"COLUNA_{i + 1}": valor
+                    for i, valor in enumerate(valores)
+                }
+
+            dados.append(registro)
+
+        except Exception as erro:
+
+            print(
+                f"⚠ Erro ao ler uma linha: {erro}"
             )
 
-            dados.append(
-                registro
-            )
-
-    df = pd.DataFrame(
-        dados
-    )
+    df = pd.DataFrame(dados)
 
     print(
         f"✓ Registros encontrados: {len(df)}"
@@ -526,10 +697,6 @@ def extrair_tabela(driver):
 
     return df
 
-
-# ============================================================
-# ADICIONAR DATA
-# ============================================================
 
 def adicionar_data(df):
 
@@ -783,8 +950,8 @@ def executar():
             driver
         )
 
-        # Aguarda o AutoVision processar
-        time.sleep(5)
+        # A extração aguarda a tabela por até 120 segundos
+        time.sleep(2)
 
         # ----------------------------------------------------
         # EXTRAIR DADOS
@@ -825,13 +992,13 @@ def executar():
             )
 
         print("\n" + "=" * 70)
-        print("PROCESSO FINALIZADO COM SUCESSO")
+        print("✅ PROCESSO FINALIZADO COM SUCESSO")
         print("=" * 70)
 
     except Exception as erro:
 
         print("\n" + "=" * 70)
-        print(" ERRO NA AUTOMAÇÃO")
+        print("❌ ERRO NA AUTOMAÇÃO")
         print("=" * 70)
 
         print(
