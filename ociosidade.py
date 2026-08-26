@@ -94,169 +94,191 @@ def criar_driver():
 
 def fazer_login(driver):
 
-    print("\n" + "=" * 70)
+    print("
+" + "=" * 70)
     print("LOGIN AUTOVISION")
     print("=" * 70)
 
     if not USUARIO:
-        raise RuntimeError(
-            "AUTOVISION_USUARIO não configurado."
-        )
+        raise RuntimeError("AUTOVISION_USUARIO não configurado.")
 
     if not SENHA:
-        raise RuntimeError(
-            "AUTOVISION_SENHA não configurada."
-        )
+        raise RuntimeError("AUTOVISION_SENHA não configurada.")
 
+    driver.switch_to.default_content()
     driver.get(URL_LOGIN)
 
-    wait = WebDriverWait(
-        driver,
-        TIMEOUT
-    )
+    wait = WebDriverWait(driver, TIMEOUT)
 
     campo_usuario = wait.until(
-        EC.visibility_of_element_located(
-            (By.ID, "usuario")
-        )
+        EC.visibility_of_element_located((By.ID, "usuario"))
     )
-
     campo_usuario.clear()
-
-    campo_usuario.send_keys(
-        USUARIO
-    )
+    campo_usuario.send_keys(USUARIO)
 
     campo_senha = wait.until(
-        EC.visibility_of_element_located(
-            (By.ID, "senha")
-        )
+        EC.visibility_of_element_located((By.ID, "senha"))
     )
-
     campo_senha.clear()
-
-    campo_senha.send_keys(
-        SENHA
-    )
+    campo_senha.send_keys(SENHA)
 
     botao_login = wait.until(
         EC.element_to_be_clickable(
-            (
-                By.CSS_SELECTOR,
-                "button[type='submit']"
-            )
+            (By.CSS_SELECTOR, "button[type='submit']")
         )
     )
 
-    driver.execute_script(
-        "arguments[0].click();",
-        botao_login
-    )
+    driver.execute_script("arguments[0].click();", botao_login)
 
     print("Login enviado...")
 
     try:
-
         wait.until(
-            lambda d: len(
-                d.find_elements(
-                    By.ID,
-                    "usuario"
-                )
-            ) == 0
+            lambda d: len(d.find_elements(By.ID, "usuario")) == 0
+        )
+
+        print("Aguardando carregamento do sistema...")
+        time.sleep(5)
+
+        WebDriverWait(driver, TIMEOUT).until(
+            lambda d: d.execute_script(
+                "return document.readyState"
+            ) == "complete"
         )
 
     except TimeoutException:
-
         raise RuntimeError(
-            "Login não concluído."
+            "Login não concluído ou página não terminou de carregar."
         )
 
     print("✓ Login concluído.")
+    print(f"URL após login: {driver.current_url}")
 
-
-# ============================================================
-# ACESSAR RELATÓRIO OCIOSIDADE
-# ============================================================
 
 def acessar_ociosidade(driver):
 
-    print("\n" + "=" * 70)
+    print("
+" + "=" * 70)
     print("ACESSANDO RELATÓRIO DE OCIOSIDADE")
     print("=" * 70)
 
-    wait = WebDriverWait(
-        driver,
-        TIMEOUT
-    )
-
-    link = wait.until(
-        EC.presence_of_element_located(
-            (
-                By.CSS_SELECTOR,
-                'a[href="modulos/relatorios/relatorio_ociosidade.php"]'
-            )
-        )
-    )
-
-    driver.execute_script(
-        "arguments[0].click();",
-        link
-    )
-
-    time.sleep(3)
-
-    # Tenta encontrar o conteúdo dentro de iframe
-    frames = driver.find_elements(
-        By.TAG_NAME,
-        "iframe"
-    )
-
-    for frame in frames:
-
-        try:
-
-            driver.switch_to.default_content()
-
-            driver.switch_to.frame(
-                frame
-            )
-
-            if driver.find_elements(
-                By.ID,
-                "data_inicial"
-            ):
-
-                print(
-                    "✓ Página de Ociosidade encontrada."
-                )
-
-                return
-
-        except Exception:
-
-            pass
-
-    # Caso não esteja dentro de iframe
     driver.switch_to.default_content()
 
-    wait.until(
-        EC.presence_of_element_located(
-            (
-                By.ID,
-                "data_inicial"
+    print("Aguardando AutoVision carregar...")
+    time.sleep(5)
+
+    acessou = False
+
+    seletores = [
+        'a[href*="relatorio_ociosidade.php"]',
+        'a[href*="relatorio_ociosidade"]',
+        'a[href*="ociosidade"]',
+    ]
+
+    print("Tentativa 1: procurando link de Ociosidade...")
+
+    try:
+        for seletor in seletores:
+            elementos = driver.find_elements(
+                By.CSS_SELECTOR,
+                seletor
             )
+
+            if elementos:
+                print(f"✓ Link encontrado: {seletor}")
+
+                driver.execute_script(
+                    "arguments[0].click();",
+                    elementos[0]
+                )
+
+                acessou = True
+                time.sleep(5)
+                break
+
+    except Exception as erro:
+        print(f"⚠ Erro ao procurar link: {erro}")
+
+    if not acessou:
+        print("Tentativa 2: acessando relatório diretamente...")
+
+        driver.switch_to.default_content()
+
+        driver.get(
+            "https://www.autovision.com.br/v3/"
+            "modulos/relatorios/"
+            "relatorio_ociosidade.php"
         )
+
+        time.sleep(5)
+
+    driver.switch_to.default_content()
+
+    try:
+        print("Verificando página principal...")
+
+        WebDriverWait(driver, 20).until(
+            lambda d: len(
+                d.find_elements(By.ID, "data_inicial")
+            ) > 0
+        )
+
+        print("✓ Página de Ociosidade encontrada.")
+        return
+
+    except TimeoutException:
+        print("Campo não encontrado na página principal.")
+
+    driver.switch_to.default_content()
+
+    frames = driver.find_elements(By.TAG_NAME, "iframe")
+
+    print(f"Frames encontrados: {len(frames)}")
+
+    for indice, frame in enumerate(frames):
+        try:
+            driver.switch_to.default_content()
+            driver.switch_to.frame(frame)
+
+            print(f"Verificando iframe {indice + 1}...")
+
+            WebDriverWait(driver, 10).until(
+                lambda d: len(
+                    d.find_elements(By.ID, "data_inicial")
+                ) > 0
+            )
+
+            print(
+                f"✓ Página de Ociosidade encontrada "
+                f"no iframe {indice + 1}."
+            )
+
+            return
+
+        except TimeoutException:
+            continue
+
+        except Exception as erro:
+            print(
+                f"Erro no iframe {indice + 1}: {erro}"
+            )
+
+    driver.switch_to.default_content()
+
+    print("
+" + "=" * 70)
+    print("ERRO: PÁGINA DE OCIOSIDADE NÃO ENCONTRADA")
+    print("=" * 70)
+
+    print(f"URL atual: {driver.current_url}")
+    print(f"Título da página: {driver.title}")
+    print(f"Quantidade de iframes: {len(frames)}")
+
+    raise RuntimeError(
+        "Não foi possível localizar a página "
+        "ou os campos do relatório de Ociosidade."
     )
 
-    print(
-        "✓ Página de Ociosidade encontrada."
-    )
-
-
-# ============================================================
-# PREENCHER DATETIME
-# ============================================================
 
 def preencher_datetime(
     driver,
@@ -803,7 +825,7 @@ def executar():
             )
 
         print("\n" + "=" * 70)
-        print(" PROCESSO FINALIZADO COM SUCESSO")
+        print("PROCESSO FINALIZADO COM SUCESSO")
         print("=" * 70)
 
     except Exception as erro:
