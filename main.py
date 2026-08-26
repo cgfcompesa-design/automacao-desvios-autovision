@@ -89,6 +89,23 @@ ABA_TELEMETRIA_OCIOSIDADE = "Geral"
 
 COLUNA_PLACA_TELEMETRIA = "PLACA"
 
+# Período: usar a coluna Data da base "Base Ociosidade Telemetria por Dia".
+# Se necessário, defina TELEMETRIA_OCIOSIDADE_DIA_URL como variável de ambiente
+# com a URL CSV publicada especificamente dessa aba.
+URL_TELEMETRIA_OCIOSIDADE_DIA = os.environ.get(
+    "TELEMETRIA_OCIOSIDADE_DIA_URL",
+    URL_TELEMETRIA_OCIOSIDADE,
+)
+
+COLUNA_DATA_TELEMETRIA_OCIOSIDADE = "Data"
+
+# Robustez para lotes grandes.
+MAX_TENTATIVAS_POR_PLACA = 3
+PAUSA_APOS_FALHA_PLACA = 5
+PAUSA_CADA_N_PLACAS = 20
+PAUSA_LOTE_GRANDE = 10
+TEMPO_AGUARDAR_MUNICIPIO = 50
+
 
 # ============================================================
 # GOOGLE SHEETS - DESTINO DOS RESULTADOS
@@ -1055,89 +1072,100 @@ def criar_driver():
 # ============================================================
 
 def obter_periodo():
+    """
+    Obtém o período diretamente da coluna Data da base
+    'Base Ociosidade Telemetria por Dia'.
 
-    hoje = datetime.now()
-
+    Não calcula mais o dia anterior. Considera a maior data válida
+    existente na fonte e processa exatamente aquele dia.
+    """
     print()
     print("=" * 70)
-    print("CALCULANDO PERÍODO")
+    print("OBTENDO PERÍODO DA BASE DE OCIOSIDADE")
     print("=" * 70)
+    print(f"Fonte: {URL_TELEMETRIA_OCIOSIDADE_DIA}")
 
-    print(
-        "Data atual:",
-        hoje.strftime(
-            "%d/%m/%Y %H:%M:%S"
+    try:
+        resposta = requests.get(
+            URL_TELEMETRIA_OCIOSIDADE_DIA,
+            timeout=90,
+            headers={"User-Agent": "Mozilla/5.0 COMPESA-AuditoriaFrota/1.0"},
         )
+        resposta.raise_for_status()
+
+        from io import StringIO
+        conteudo = resposta.content
+        try:
+            texto_csv = conteudo.decode("utf-8-sig")
+        except UnicodeDecodeError:
+            texto_csv = conteudo.decode("latin-1", errors="replace")
+
+        try:
+            df_periodo = pd.read_csv(
+                StringIO(texto_csv),
+                sep=None,
+                engine="python",
+                dtype=object,
+            )
+        except Exception:
+            df_periodo = pd.read_csv(
+                StringIO(texto_csv),
+                dtype=object,
+            )
+
+    except Exception as erro:
+        raise RuntimeError(
+            "Não foi possível carregar a base para obter o período.\n"
+            f"URL: {URL_TELEMETRIA_OCIOSIDADE_DIA}\n"
+            f"Erro: {erro}"
+        ) from erro
+
+    if df_periodo.empty:
+        raise RuntimeError("A base de Ociosidade Telemetria por Dia está vazia.")
+
+    coluna_data = encontrar_coluna(
+        df_periodo,
+        [
+            COLUNA_DATA_TELEMETRIA_OCIOSIDADE,
+            "DATA",
+            "Data",
+            "Data/Hora",
+            "DATA HORA",
+        ],
     )
 
-    if hoje.weekday() == 0:
-
-        inicio = (
-            hoje -
-            timedelta(days=3)
-        ).replace(
-            hour=0,
-            minute=0,
-            second=0,
-            microsecond=0
+    if coluna_data is None:
+        raise RuntimeError(
+            "A coluna 'Data' não foi encontrada na base de Ociosidade. "
+            f"Colunas encontradas: {list(df_periodo.columns)}"
         )
 
-        fim = (
-            hoje -
-            timedelta(days=1)
-        ).replace(
-            hour=23,
-            minute=59,
-            second=59,
-            microsecond=0
+    datas = pd.to_datetime(
+        df_periodo[coluna_data],
+        dayfirst=True,
+        errors="coerce",
+    ).dropna()
+
+    if datas.empty:
+        raise RuntimeError(
+            f"Nenhuma data válida foi encontrada na coluna '{coluna_data}'."
         )
 
-        print(
-            "Hoje é segunda-feira."
-        )
+    data_referencia = datas.max()
+    if pd.isna(data_referencia):
+        raise RuntimeError("A data de referência resultou em NaT.")
 
-        print(
-            "Período: sexta-feira até domingo."
-        )
+    inicio = data_referencia.normalize().to_pydatetime()
+    fim = (
+        data_referencia.normalize()
+        + pd.Timedelta(days=1)
+        - pd.Timedelta(seconds=1)
+    ).to_pydatetime()
 
-    else:
-
-        ontem = (
-            hoje -
-            timedelta(days=1)
-        )
-
-        inicio = ontem.replace(
-            hour=0,
-            minute=0,
-            second=0,
-            microsecond=0
-        )
-
-        fim = ontem.replace(
-            hour=23,
-            minute=59,
-            second=59,
-            microsecond=0
-        )
-
-        print(
-            "Período: dia anterior."
-        )
-
-    print(
-        "INÍCIO:",
-        inicio.strftime(
-            "%d/%m/%Y %H:%M:%S"
-        )
-    )
-
-    print(
-        "FIM:",
-        fim.strftime(
-            "%d/%m/%Y %H:%M:%S"
-        )
-    )
+    print(f"✓ Coluna utilizada: {coluna_data}")
+    print(f"✓ Maior data encontrada: {inicio.strftime('%d/%m/%Y')}")
+    print(f"INÍCIO: {inicio.strftime('%d/%m/%Y %H:%M:%S')}")
+    print(f"FIM: {fim.strftime('%d/%m/%Y %H:%M:%S')}")
 
     return inicio, fim
 
@@ -2038,6 +2066,113 @@ def aguardar_relatorio(
 
 
 # ============================================================
+# AGUARDAR MUNICÍPIO TERMINAR DE CARREGAR
+# ============================================================
+
+def aguardar_municipio_carregado(driver, timeout=None):
+    """
+    Aguarda o relatório terminar de substituir placeholders/imagens/ícones
+    da coluna Município por texto. Se a coluna não existir, não bloqueia
+    o processamento.
+    """
+    if timeout is None:
+        timeout = TEMPO_AGUARDAR_MUNICIPIO
+
+    limite = time.time() + timeout
+    ultima_quantidade = None
+
+    while time.time() < limite:
+        try:
+            resultado = driver.execute_script(
+                """
+                const normaliza = s => (s || '').trim();
+                const tabelas = [...document.querySelectorAll('table')];
+
+                for (const tabela of tabelas) {
+                    const headers = [...tabela.querySelectorAll('th, thead td')];
+                    const indice = headers.findIndex(h => {
+                        const t = normaliza(h.innerText || h.textContent)
+                            .normalize('NFD')
+                            .replace(/[\\u0300-\\u036f]/g, '')
+                            .toUpperCase();
+                        return t === 'MUNICIPIO' || t.includes('MUNICIPIO');
+                    });
+
+                    if (indice < 0) continue;
+
+                    const linhas = [...tabela.querySelectorAll('tbody tr')];
+                    if (!linhas.length) return {encontrou: true, pronto: false, total: 0};
+
+                    let pendentes = 0;
+                    let preenchidos = 0;
+
+                    for (const linha of linhas) {
+                        const celulas = linha.querySelectorAll('td');
+                        if (!celulas[indice]) continue;
+
+                        const celula = celulas[indice];
+                        const texto = normaliza(celula.innerText || celula.textContent);
+
+                        const temImagem = !!celula.querySelector('img, svg, i.icon, .fa, .glyphicon');
+                        const apenasEmoji = texto &&
+                            /^[\\p{Extended_Pictographic}\\p{Emoji_Presentation}\\s]+$/u.test(texto);
+
+                        if (!texto || temImagem || apenasEmoji) {
+                            pendentes++;
+                        } else {
+                            preenchidos++;
+                        }
+                    }
+
+                    return {
+                        encontrou: true,
+                        pronto: pendentes === 0 && preenchidos > 0,
+                        pendentes,
+                        preenchidos,
+                        total: linhas.length
+                    };
+                }
+
+                return {encontrou: false, pronto: true, total: 0};
+                """
+            )
+
+            if resultado.get("pronto"):
+                print(
+                    "✓ Município carregado: "
+                    f"{resultado.get('preenchidos', 0)} célula(s) com texto."
+                )
+                return True
+
+            atual = (
+                resultado.get("pendentes"),
+                resultado.get("preenchidos"),
+                resultado.get("total"),
+            )
+
+            if atual != ultima_quantidade:
+                print(
+                    "⌛ Aguardando Município carregar... "
+                    f"pendentes={resultado.get('pendentes', 0)} "
+                    f"preenchidos={resultado.get('preenchidos', 0)}"
+                )
+                ultima_quantidade = atual
+
+        except (StaleElementReferenceException, WebDriverException):
+            pass
+        except Exception:
+            pass
+
+        time.sleep(1)
+
+    print(
+        "⚠ Tempo de espera do Município atingido. "
+        "O processamento continuará para não travar o lote."
+    )
+    return False
+
+
+# ============================================================
 # LOCALIZAR ÍCONE HTML
 # ============================================================
 
@@ -2452,6 +2587,9 @@ def processar_placa(
 
             return None
 
+        # Espera o carregamento assíncrono do Município antes de exportar.
+        aguardar_municipio_carregado(driver)
+
         arquivos_antes = listar_htmls()
 
         clicar_icone_html(
@@ -2528,67 +2666,65 @@ def processar_placas(
     inicio,
     fim
 ):
-
     arquivos_html = []
 
-    aba_principal = (
-        driver.current_window_handle
-    )
+    aba_principal = driver.current_window_handle
+    total = len(PLACAS)
 
-    total = len(
-        PLACAS
-    )
-
-    for indice, placa in enumerate(
-        PLACAS,
-        start=1
-    ):
-
+    for indice, placa in enumerate(PLACAS, start=1):
         print()
-        print(
-            f"[{indice}/{total}]"
-        )
+        print(f"[{indice}/{total}]")
 
-        try:
+        arquivo = None
+        for tentativa in range(1, MAX_TENTATIVAS_POR_PLACA + 1):
+            try:
+                print(
+                    f"▶ Placa {placa} | tentativa "
+                    f"{tentativa}/{MAX_TENTATIVAS_POR_PLACA}"
+                )
 
-            arquivo = (
-                processar_placa(
+                arquivo = processar_placa(
                     driver,
                     aba_principal,
                     placa,
                     inicio,
-                    fim
-                )
-            )
-
-            if arquivo:
-
-                arquivos_html.append(
-                    arquivo
+                    fim,
                 )
 
-        except Exception as erro:
+                if arquivo:
+                    arquivos_html.append(arquivo)
 
-            print()
-            print("!" * 70)
+                break
 
+            except Exception as erro:
+                print()
+                print("!" * 70)
+                print(
+                    f"ERRO NA PLACA {placa} "
+                    f"(tentativa {tentativa}/{MAX_TENTATIVAS_POR_PLACA})"
+                )
+                print(erro)
+                print("!" * 70)
+
+                if tentativa < MAX_TENTATIVAS_POR_PLACA:
+                    time.sleep(PAUSA_APOS_FALHA_PLACA)
+
+        if arquivo is None and tentativa >= MAX_TENTATIVAS_POR_PLACA:
             print(
-                f"ERRO NA PLACA {placa}"
+                f"⚠ {placa} não foi concluída após "
+                f"{MAX_TENTATIVAS_POR_PLACA} tentativa(s). "
+                "Continuando o lote."
             )
 
+        if indice % PAUSA_CADA_N_PLACAS == 0 and indice < total:
             print(
-                erro
+                f"☕ Pausa de estabilidade após {indice} placas..."
             )
+            time.sleep(PAUSA_LOTE_GRANDE)
 
-            print("!" * 70)
-
-        time.sleep(
-            INTERVALO_ENTRE_PLACAS
-        )
+        time.sleep(INTERVALO_ENTRE_PLACAS)
 
     return arquivos_html
-
-
 
 
 # ============================================================
@@ -6244,12 +6380,19 @@ def formatar_excel(
 
 def preparar_valor_json(valor):
     """Converte recursivamente valores para tipos compatíveis com JSON."""
-    if valor is None:
+    # pd.NaT é um NaTType e pode passar por isinstance(datetime).
+    # Por isso a verificação de nulo vem antes de qualquer strftime.
+    if valor is None or valor is pd.NaT:
         return ""
 
-    if isinstance(valor, pd.Timestamp):
-        if pd.isna(valor):
+    try:
+        resultado_nulo = pd.isna(valor)
+        if isinstance(resultado_nulo, bool) and resultado_nulo:
             return ""
+    except Exception:
+        pass
+
+    if isinstance(valor, pd.Timestamp):
         return valor.strftime("%d/%m/%Y %H:%M:%S")
 
     if isinstance(valor, datetime):
@@ -6263,12 +6406,6 @@ def preparar_valor_json(valor):
 
     if isinstance(valor, (list, tuple)):
         return [preparar_valor_json(v) for v in valor]
-
-    try:
-        if pd.isna(valor):
-            return ""
-    except Exception:
-        pass
 
     if hasattr(valor, "item"):
         try:
