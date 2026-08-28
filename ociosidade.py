@@ -1,4 +1,4 @@
-```python
+
 import os
 import time
 import json
@@ -1520,4 +1520,4 @@ def executar():
 if __name__ == "__main__":
 
     executar()
-```
+
