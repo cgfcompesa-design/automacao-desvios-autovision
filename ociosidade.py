@@ -78,7 +78,7 @@ SENHA = os.environ.get(
 
 GOOGLE_SCRIPT_URL = (
     "https://script.google.com/macros/s/"
-    "AKfycbwVgLOtn5n92eCZchaKo9naF_ix0lmjzcwNdm-HQafSOH48ZcMrCf9_MyfDHsAwp14"
+    "AKfycbyieXAEwVYHX1qe9Kbz0egAhqh8Mlzbv9tHuyKjyGB2d2a92R17qzCMOHtq0xMy30L-"
     "/exec"
 
 )
