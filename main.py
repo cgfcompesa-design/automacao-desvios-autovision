@@ -73,8 +73,6 @@ URL_ABASTECIMENTO_EDIT = (
 # Coluna: PLACA
 # ============================================================
 
-
-
 URL_TELEMETRIA_OCIOSIDADE = (
     "https://docs.google.com/spreadsheets/d/e/"
     "2PACX-1vQU22jWG-2LuGLDuLYvVQoBbv5JdArq9WUwGcJ3znHPZWHrFABji3IFNFwYCtVX7u8uo-Rd7YJFb9fZ/"
@@ -86,13 +84,6 @@ URL_TELEMETRIA_OCIOSIDADE_EDIT = (
     "1q-SxCJ4C97uEzuPUyvykM8maMw0VxF540nwfK7bv0SA/"
     "edit?gid=756259345#gid=756259345"
 )
-
-
-
-
-
-
-https://docs.google.com/spreadsheets/d/1PSMr1q_8Z3uKSH7J1V8Uv4y9XVFd09hAouGUE8OXavI/edit?gid=1843788746#gid=1843788746
 
 ABA_TELEMETRIA_OCIOSIDADE = "Geral"
 
