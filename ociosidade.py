@@ -80,6 +80,7 @@ GOOGLE_SCRIPT_URL = (
     "https://script.google.com/macros/s/"
     "AKfycbwVgLOtn5n92eCZchaKo9naF_ix0lmjzcwNdm-HQafSOH48ZcMrCf9_MyfDHsAwp14"
     "/exec"
+
 )
 
 
