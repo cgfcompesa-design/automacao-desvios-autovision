@@ -1,36 +1,64 @@
-name: Automacao de Ociosidade
+
+name: Automacao AutoVision - Ociosidade
 
 on:
   workflow_dispatch:
 
+  schedule:
+    # 04:00 UTC = 01:00 horário de Brasília
+    - cron: "0 4 * * *"
+
 jobs:
   executar-ociosidade:
+
     runs-on: windows-latest
 
     env:
       PYTHONIOENCODING: utf-8
       PYTHONUTF8: "1"
 
-      # Configure estes valores nos Secrets do GitHub
       AUTOVISION_USUARIO: ${{ secrets.AUTOVISION_USUARIO }}
       AUTOVISION_SENHA: ${{ secrets.AUTOVISION_SENHA }}
 
     steps:
+
+      # ==========================================================
+      # BAIXAR REPOSITÓRIO
+      # ==========================================================
+
       - name: Checkout do repositorio
         uses: actions/checkout@v4
 
+
+      # ==========================================================
+      # CONFIGURAR PYTHON
+      # ==========================================================
+
       - name: Configurar Python
         uses: actions/setup-python@v5
+
         with:
           python-version: "3.11"
 
+
+      # ==========================================================
+      # ATUALIZAR PIP
+      # ==========================================================
+
       - name: Atualizar pip
         shell: pwsh
+
         run: |
           python -m pip install --upgrade pip
 
+
+      # ==========================================================
+      # INSTALAR DEPENDÊNCIAS
+      # ==========================================================
+
       - name: Instalar dependencias
         shell: pwsh
+
         run: |
           if (Test-Path "requirements.txt") {
             pip install -r requirements.txt
@@ -39,15 +67,31 @@ jobs:
             pip install pandas requests selenium
           }
 
-      - name: Verificar Python
+
+      # ==========================================================
+      # VERIFICAR AMBIENTE
+      # ==========================================================
+
+      - name: Verificar ambiente
         shell: pwsh
+
         run: |
           python --version
-          python -c "import sys; print(sys.stdout.encoding)"
+          python -c "import pandas; print('Pandas OK')"
+          python -c "import requests; print('Requests OK')"
+          python -c "import selenium; print('Selenium OK')"
 
-      - name: Executar automacao
+
+      # ==========================================================
+      # EXECUTAR AUTOMAÇÃO
+      # ==========================================================
+
+      - name: Executar automacao de ociosidade
         shell: pwsh
+
         run: |
           $env:PYTHONIOENCODING = "utf-8"
           $env:PYTHONUTF8 = "1"
+
           python ociosidade.py
+
