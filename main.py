@@ -79,6 +79,10 @@ URL_TELEMETRIA_OCIOSIDADE = (
     "pub?gid=1843788746&single=true&output=csv"
 )
 
+
+
+
+
 URL_TELEMETRIA_OCIOSIDADE_EDIT = (
     "https://docs.google.com/spreadsheets/d/"
     "1PSMr1q_8Z3uKSH7J1V8Uv4y9XVFd09hAouGUE8OXavI/"
