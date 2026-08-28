@@ -75,15 +75,17 @@ URL_ABASTECIMENTO_EDIT = (
 
 URL_TELEMETRIA_OCIOSIDADE = (
     "https://docs.google.com/spreadsheets/d/e/"
-    "2PACX-1vQU22jWG-2LuGLDuLYvVQoBbv5JdArq9WUwGcJ3znHPZWHrFABji3IFNFwYCtVX7u8uo-Rd7YJFb9fZ/"
-    "pub?gid=756259345&single=true&output=csv"
+    "2PACX-1vQ_A4GVRaEe70J9splF4SJhuytiTP3TIjfrXRke4qp-wYiEupFXGuIgGmACVLcTeQx27N4ridepjL5M/"
+    "pub?gid=1843788746&single=true&output=csv"
 )
 
 URL_TELEMETRIA_OCIOSIDADE_EDIT = (
     "https://docs.google.com/spreadsheets/d/"
-    "1q-SxCJ4C97uEzuPUyvykM8maMw0VxF540nwfK7bv0SA/"
-    "edit?gid=756259345#gid=756259345"
+    "1PSMr1q_8Z3uKSH7J1V8Uv4y9XVFd09hAouGUE8OXavI/"
+    "edit?gid=1843788746#gid=1843788746"
 )
+
+https://docs.google.com/spreadsheets/d/1PSMr1q_8Z3uKSH7J1V8Uv4y9XVFd09hAouGUE8OXavI/edit?gid=1843788746#gid=1843788746
 
 ABA_TELEMETRIA_OCIOSIDADE = "Geral"
 
