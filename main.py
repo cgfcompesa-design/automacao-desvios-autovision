@@ -100,11 +100,11 @@ URL_TELEMETRIA_OCIOSIDADE_DIA = os.environ.get(
 COLUNA_DATA_TELEMETRIA_OCIOSIDADE = "Data"
 
 # Robustez para lotes grandes.
-MAX_TENTATIVAS_POR_PLACA = 3
-PAUSA_APOS_FALHA_PLACA = 7
-PAUSA_CADA_N_PLACAS = 20
-PAUSA_LOTE_GRANDE = 60
-TEMPO_AGUARDAR_MUNICIPIO = 140
+MAX_TENTATIVAS_POR_PLACA = 2
+PAUSA_APOS_FALHA_PLACA = 3
+PAUSA_CADA_N_PLACAS = 50
+PAUSA_LOTE_GRANDE = 10
+TEMPO_AGUARDAR_MUNICIPIO = 25
 
 
 # ============================================================
@@ -134,16 +134,24 @@ GOOGLE_SCRIPT_URL = (
 )
 
 # ============================================================
-# PLACAS
-#
-# NÃO PREENCHER MANUALMENTE.
-#
-# Será preenchida automaticamente pela função:
-#
-# carregar_placas_telemetria()
+# MATRIZ DE PLACAS
 # ============================================================
+# As placas para este teste serão fornecidas diretamente nesta matriz.
+#
+# Exemplo:
+# MATRIZ_PLACAS = [
+#        "RZV5E37",
+# ]
+#
+# Não é necessário preencher manualmente nenhuma outra parte do código.
+MATRIZ_PLACAS = [
+   "RZV5E37",
+]
 
-PLACAS = []
+# Mantém o nome PLACAS utilizado pelo restante do programa.
+PLACAS = list(MATRIZ_PLACAS)
+
+
 
 
 # ============================================================
@@ -307,7 +315,7 @@ def nome_seguro(valor):
 
 GOOGLE_PLACES_API_KEY = os.environ.get(
     "GOOGLE_PLACES_API_KEY",
-    "AIzaSyBtJmgG71Efuw_JEN8_-nQHps53K9c-RBY"
+    ""
 )
 
 OVERPASS_URL = os.environ.get(
@@ -470,9 +478,22 @@ TIMEOUT_RELATORIO = 120
 
 TIMEOUT_DOWNLOAD = 90
 
-INTERVALO_ENTRE_PLACAS = 1.0
+INTERVALO_ENTRE_PLACAS = 0.25
 
-INTERVALO_ENTRE_ANALISES = 2.0
+INTERVALO_ENTRE_ANALISES = 0.5
+# ============================================================
+# JANELA OPERACIONAL E PROCESSAMENTO EM LOTE
+# ============================================================
+
+HORA_INICIO_OPERACIONAL = 8
+HORA_FIM_OPERACIONAL = 17
+
+# Número de navegadores simultâneos. 3 reduz bastante o tempo
+# de 400-600 placas sem abrir uma quantidade excessiva de sessões.
+NUM_WORKERS = int(os.environ.get("AUTOVISION_WORKERS", "3"))
+
+# Somente considera um HTML já existente como concluído quando
+# o nome do arquivo corresponde à placa e a uma data do período.
 
 
 # ============================================================
@@ -481,7 +502,7 @@ INTERVALO_ENTRE_ANALISES = 2.0
 
 USUARIO = os.environ.get(
     "AUTOVISION_USUARIO",
-    "nayarasilva"
+    "nayarasilva@compesa.com.br"
 )
 
 SENHA = os.environ.get(
@@ -496,12 +517,12 @@ SENHA = os.environ.get(
 
 NEXUS_EMAIL = os.environ.get(
     "NEXUS_EMAIL",
-    "nayarasilva@compesa.com.br"
+    ""
 )
 
 NEXUS_SENHA = os.environ.get(
     "NEXUS_SENHA",
-    "acessologin"
+    ""
 )
 
 
@@ -854,230 +875,98 @@ def carregar_placas_telemetria_ociosidade():
 # O Selenium Manager gerencia automaticamente o driver.
 # ============================================================
 
-def criar_driver():
-
+def criar_driver(download_dir=None):
+    """
+    Cria um Edge headless. Cada worker pode receber sua própria pasta
+    de download para permitir processamento paralelo sem misturar HTMLs.
+    """
     print()
     print("=" * 70)
     print("INICIANDO MICROSOFT EDGE")
     print("=" * 70)
 
     options = Options()
-
-    # ========================================================
-    # AMBIENTE GITHUB ACTIONS / LINUX
-    # ========================================================
-
-    # GitHub Actions normalmente não possui interface gráfica.
-    # O Edge precisa funcionar em modo headless.
     options.add_argument("--headless=new")
-
-    # Evita problemas de sandbox no ambiente Linux do runner.
     options.add_argument("--no-sandbox")
-
-    # Evita problemas de memória compartilhada (/dev/shm).
     options.add_argument("--disable-dev-shm-usage")
-
-    # Evita problemas relacionados à GPU.
     options.add_argument("--disable-gpu")
-
-    # Tamanho da janela virtual do navegador.
     options.add_argument("--window-size=1920,1080")
-
-    # ========================================================
-    # ESTABILIDADE
-    # ========================================================
-
     options.add_argument("--disable-notifications")
-
     options.add_argument("--disable-popup-blocking")
-
-    options.add_argument(
-        "--disable-blink-features=AutomationControlled"
-    )
-
-    options.add_argument(
-        "--disable-background-networking"
-    )
-
-    options.add_argument(
-        "--disable-background-timer-throttling"
-    )
-
-    options.add_argument(
-        "--disable-backgrounding-occluded-windows"
-    )
-
-    options.add_argument(
-        "--disable-renderer-backgrounding"
-    )
-
-    options.add_argument(
-        "--no-first-run"
-    )
-
-    options.add_argument(
-        "--no-default-browser-check"
-    )
-
-    # ========================================================
-    # REDUZ INDÍCIOS DE AUTOMAÇÃO
-    # ========================================================
+    options.add_argument("--disable-blink-features=AutomationControlled")
+    options.add_argument("--disable-background-networking")
+    options.add_argument("--disable-background-timer-throttling")
+    options.add_argument("--disable-backgrounding-occluded-windows")
+    options.add_argument("--disable-renderer-backgrounding")
+    options.add_argument("--no-first-run")
+    options.add_argument("--no-default-browser-check")
 
     options.add_experimental_option(
         "excludeSwitches",
-        [
-            "enable-automation"
-        ]
+        ["enable-automation"]
     )
 
-    # ========================================================
-    # DOWNLOAD DOS HTMLs
-    # ========================================================
-
-    PASTA_HTML.mkdir(
-        parents=True,
-        exist_ok=True
-    )
+    pasta_download = Path(download_dir) if download_dir else PASTA_HTML
+    pasta_download.mkdir(parents=True, exist_ok=True)
 
     preferencias = {
-        "download.default_directory":
-            str(PASTA_HTML.resolve()),
-
-        "download.prompt_for_download":
-            False,
-
-        "download.directory_upgrade":
-            True,
-
-        "safebrowsing.enabled":
-            True,
-
-        "profile.default_content_setting_values.automatic_downloads":
-            1,
-
-        "download_restrictions":
-            0,
+        "download.default_directory": str(pasta_download.resolve()),
+        "download.prompt_for_download": False,
+        "download.directory_upgrade": True,
+        "safebrowsing.enabled": True,
+        "profile.default_content_setting_values.automatic_downloads": 1,
+        "download_restrictions": 0,
     }
 
-    options.add_experimental_option(
-        "prefs",
-        preferencias
-    )
-
-    # ========================================================
-    # INICIAR EDGE
-    # ========================================================
+    options.add_experimental_option("prefs", preferencias)
 
     try:
-
         print("Iniciando Edge via Selenium Manager...")
-
-        driver = webdriver.Edge(
-            options=options
-        )
-
+        driver = webdriver.Edge(options=options)
     except Exception as erro:
-
-        print()
-        print("=" * 70)
-        print("❌ ERRO AO INICIAR MICROSOFT EDGE")
-        print("=" * 70)
-        print(erro)
-
         raise RuntimeError(
             "Não foi possível iniciar o Microsoft Edge.\n\n"
-            "Verifique se o workflow do GitHub Actions "
-            "instalou o Microsoft Edge corretamente.\n\n"
+            "Verifique se o workflow do GitHub Actions instalou o Edge corretamente.\n\n"
             f"Erro original: {erro}"
         ) from erro
 
-    # ========================================================
-    # CONFIGURAÇÕES DO DRIVER
-    # ========================================================
-
     try:
-
-        driver.set_page_load_timeout(
-            120
-        )
-
+        driver.set_page_load_timeout(120)
     except Exception:
         pass
 
     try:
-
-        driver.set_script_timeout(
-            120
-        )
-
+        driver.set_script_timeout(120)
     except Exception:
         pass
 
-    # ========================================================
-    # LIBERAR DOWNLOADS EM HEADLESS
-    # ========================================================
-
     try:
-
         driver.execute_cdp_cmd(
             "Browser.setDownloadBehavior",
             {
                 "behavior": "allow",
-                "downloadPath": str(
-                    PASTA_HTML.resolve()
-                ),
+                "downloadPath": str(pasta_download.resolve()),
             }
         )
-
-        print(
-            "✓ Download automático habilitado."
-        )
-
     except Exception as erro:
+        print(f"⚠ Não foi possível configurar download via CDP: {erro}")
 
-        print(
-            f"⚠ Não foi possível configurar "
-            f"download via CDP: {erro}"
-        )
-
-    # ========================================================
-    # RESULTADO
-    # ========================================================
-
-    print(
-        "✓ Microsoft Edge iniciado."
-    )
-
-    print(
-        "✓ Modo headless ativo."
-    )
-
-    print(
-        "✓ Ambiente compatível com GitHub Actions."
-    )
-
-    print(
-        "✓ Selenium Manager responsável pelo WebDriver."
-    )
-
-    print(
-        f"✓ Pasta HTML: {PASTA_HTML.resolve()}"
-    )
+    print("✓ Microsoft Edge iniciado.")
+    print("✓ Modo headless ativo.")
+    print(f"✓ Pasta HTML: {pasta_download.resolve()}")
 
     return driver
-
-
-# ============================================================
-# OBTER PERÍODO
-# ============================================================
-
 def obter_periodo():
     """
-    Obtém o período diretamente da coluna Data da base
-    'Base Ociosidade Telemetria por Dia'.
+    Obtém o período exclusivamente da coluna 'Data' da Base Ociosidade
+    Telemetria por Dia. Não calcula o dia anterior.
 
-    Não calcula mais o dia anterior. Considera a maior data válida
-    existente na fonte e processa exatamente aquele dia.
+    O período final é:
+      menor data encontrada às 08:00
+      maior data encontrada às 17:00
+
+    Assim, quando a base possuir vários dias, todo o intervalo da base
+    é considerado, mas sempre dentro da janela operacional.
     """
     print()
     print("=" * 70)
@@ -1095,6 +984,7 @@ def obter_periodo():
 
         from io import StringIO
         conteudo = resposta.content
+
         try:
             texto_csv = conteudo.decode("utf-8-sig")
         except UnicodeDecodeError:
@@ -1151,29 +1041,31 @@ def obter_periodo():
             f"Nenhuma data válida foi encontrada na coluna '{coluna_data}'."
         )
 
-    data_referencia = datas.max()
-    if pd.isna(data_referencia):
-        raise RuntimeError("A data de referência resultou em NaT.")
+    data_min = datas.min().normalize()
+    data_max = datas.max().normalize()
 
-    inicio = data_referencia.normalize().to_pydatetime()
+    inicio = (
+        data_min
+        + pd.Timedelta(hours=HORA_INICIO_OPERACIONAL)
+    ).to_pydatetime()
+
     fim = (
-        data_referencia.normalize()
-        + pd.Timedelta(days=1)
-        - pd.Timedelta(seconds=1)
+        data_max
+        + pd.Timedelta(hours=HORA_FIM_OPERACIONAL)
     ).to_pydatetime()
 
     print(f"✓ Coluna utilizada: {coluna_data}")
-    print(f"✓ Maior data encontrada: {inicio.strftime('%d/%m/%Y')}")
+    print(f"✓ Menor data encontrada: {data_min.strftime('%d/%m/%Y')}")
+    print(f"✓ Maior data encontrada: {data_max.strftime('%d/%m/%Y')}")
+    print(
+        f"✓ Janela operacional: "
+        f"{HORA_INICIO_OPERACIONAL:02d}:00 até "
+        f"{HORA_FIM_OPERACIONAL:02d}:00"
+    )
     print(f"INÍCIO: {inicio.strftime('%d/%m/%Y %H:%M:%S')}")
     print(f"FIM: {fim.strftime('%d/%m/%Y %H:%M:%S')}")
 
     return inicio, fim
-
-
-# ============================================================
-# LOGIN AUTOVISION
-# ============================================================
-
 def fazer_login(driver):
 
     print()
@@ -2071,53 +1963,59 @@ def aguardar_relatorio(
 
 def aguardar_municipio_carregado(driver, timeout=None):
     """
-    Aguarda o relatório terminar de substituir placeholders/imagens/ícones
-    da coluna Município por texto. Se a coluna não existir, não bloqueia
-    o processamento.
+    Aguarda somente quando a célula Município ainda contém imagem/ícone/emoji
+    ou está vazia. Assim não aplica 140s fixos a cada placa.
     """
-    if timeout is None:
-        timeout = TEMPO_AGUARDAR_MUNICIPIO
-
+    timeout = TEMPO_AGUARDAR_MUNICIPIO if timeout is None else timeout
     limite = time.time() + timeout
-    ultima_quantidade = None
+    primeira_verificacao = True
 
     while time.time() < limite:
         try:
             resultado = driver.execute_script(
                 """
-                const normaliza = s => (s || '').trim();
-                const tabelas = [...document.querySelectorAll('table')];
+                const norm = s => (s || '').trim();
+                const normaliza = s => norm(s).normalize('NFD')
+                    .replace(/[\\u0300-\\u036f]/g, '').toUpperCase();
 
-                for (const tabela of tabelas) {
-                    const headers = [...tabela.querySelectorAll('th, thead td')];
+                const emojiOuImagem = s => {
+                    const texto = norm(s);
+                    if (!texto) return true;
+                    try {
+                        return /^[\\p{Extended_Pictographic}\\p{Emoji_Presentation}\\s]+$/u.test(texto);
+                    } catch(e) {
+                        return false;
+                    }
+                };
+
+                for (const tabela of document.querySelectorAll('table')) {
+                    const headers = [...tabela.querySelectorAll('thead th, thead td, tr:first-child th')];
                     const indice = headers.findIndex(h => {
-                        const t = normaliza(h.innerText || h.textContent)
-                            .normalize('NFD')
-                            .replace(/[\\u0300-\\u036f]/g, '')
-                            .toUpperCase();
+                        const t = normaliza(h.innerText || h.textContent);
                         return t === 'MUNICIPIO' || t.includes('MUNICIPIO');
                     });
 
                     if (indice < 0) continue;
 
                     const linhas = [...tabela.querySelectorAll('tbody tr')];
-                    if (!linhas.length) return {encontrou: true, pronto: false, total: 0};
+                    if (!linhas.length) {
+                        return {encontrou:true, pronto:false, pendentes:0, total:0};
+                    }
 
                     let pendentes = 0;
                     let preenchidos = 0;
 
                     for (const linha of linhas) {
                         const celulas = linha.querySelectorAll('td');
-                        if (!celulas[indice]) continue;
-
                         const celula = celulas[indice];
-                        const texto = normaliza(celula.innerText || celula.textContent);
+                        if (!celula) continue;
 
-                        const temImagem = !!celula.querySelector('img, svg, i.icon, .fa, .glyphicon');
-                        const apenasEmoji = texto &&
-                            /^[\\p{Extended_Pictographic}\\p{Emoji_Presentation}\\s]+$/u.test(texto);
+                        const texto = norm(celula.innerText || celula.textContent);
+                        const temImagem = !!celula.querySelector(
+                            'img, svg, i, .fa, .glyphicon, [class*="icon"]'
+                        );
 
-                        if (!texto || temImagem || apenasEmoji) {
+                        if (temImagem || emojiOuImagem(texto)) {
                             pendentes++;
                         } else {
                             preenchidos++;
@@ -2125,57 +2023,40 @@ def aguardar_municipio_carregado(driver, timeout=None):
                     }
 
                     return {
-                        encontrou: true,
-                        pronto: pendentes === 0 && preenchidos > 0,
+                        encontrou:true,
+                        pronto:pendentes === 0 && preenchidos > 0,
                         pendentes,
                         preenchidos,
-                        total: linhas.length
+                        total:linhas.length
                     };
                 }
 
-                return {encontrou: false, pronto: true, total: 0};
+                return {encontrou:false, pronto:true, pendentes:0, preenchidos:0, total:0};
                 """
             )
 
             if resultado.get("pronto"):
-                print(
-                    "✓ Município carregado: "
-                    f"{resultado.get('preenchidos', 0)} célula(s) com texto."
-                )
+                if not primeira_verificacao:
+                    print("✓ Município terminou de carregar.")
                 return True
 
-            atual = (
-                resultado.get("pendentes"),
-                resultado.get("preenchidos"),
-                resultado.get("total"),
-            )
-
-            if atual != ultima_quantidade:
+            if primeira_verificacao:
                 print(
-                    "⌛ Aguardando Município carregar... "
-                    f"pendentes={resultado.get('pendentes', 0)} "
-                    f"preenchidos={resultado.get('preenchidos', 0)}"
+                    "⌛ Município ainda está carregando; "
+                    "aguardando texto real..."
                 )
-                ultima_quantidade = atual
+                primeira_verificacao = False
 
-        except (StaleElementReferenceException, WebDriverException):
-            pass
         except Exception:
             pass
 
-        time.sleep(1)
+        time.sleep(0.75)
 
     print(
-        "⚠ Tempo de espera do Município atingido. "
-        "O processamento continuará para não travar o lote."
+        "⚠ Município não terminou de carregar no tempo configurado. "
+        "Continuando para não travar o lote."
     )
     return False
-
-
-# ============================================================
-# LOCALIZAR ÍCONE HTML
-# ============================================================
-
 def localizar_link_html(
     driver
 ):
@@ -2232,30 +2113,19 @@ def localizar_link_html(
 # LISTAR HTMLS
 # ============================================================
 
-def listar_htmls():
-
-    if not PASTA_HTML.exists():
+def listar_htmls(pasta=None):
+    pasta = Path(pasta) if pasta else PASTA_HTML
+    if not pasta.exists():
         return set()
 
     return {
         arquivo.name
-        for arquivo in PASTA_HTML.iterdir()
+        for arquivo in pasta.iterdir()
         if (
             arquivo.is_file()
-            and
-            arquivo.suffix.lower()
-            in {
-                ".html",
-                ".htm"
-            }
+            and arquivo.suffix.lower() in {".html", ".htm"}
         )
     }
-
-
-# ============================================================
-# CLICAR HTML
-# ============================================================
-
 def clicar_icone_html(
     driver
 ):
@@ -2307,375 +2177,177 @@ def clicar_icone_html(
 # ESPERAR DOWNLOAD HTML
 # ============================================================
 
-def esperar_download_html(arquivos_antes, timeout=None):
-
+def esperar_download_html(arquivos_antes, timeout=None, pasta=None):
     if timeout is None:
         timeout = TIMEOUT_DOWNLOAD
 
-    PASTA_HTML.mkdir(
-        parents=True,
-        exist_ok=True
-    )
-
+    pasta = Path(pasta) if pasta else PASTA_HTML
+    pasta.mkdir(parents=True, exist_ok=True)
     limite = time.time() + timeout
 
     print("⬇ Aguardando download HTML...")
 
     while time.time() < limite:
-
         try:
-            arquivos = list(
-                PASTA_HTML.iterdir()
-            )
+            arquivos = list(pasta.iterdir())
         except Exception:
             arquivos = []
 
-        # ----------------------------------------------------
-        # Arquivos temporários
-        # ----------------------------------------------------
+        temporarios = [
+            arquivo for arquivo in arquivos
+            if arquivo.is_file()
+            and arquivo.name.lower().endswith((".crdownload", ".tmp", ".part"))
+        ]
 
-        temporarios = []
-
-        for arquivo in arquivos:
-
-            if not arquivo.is_file():
-                continue
-
-            nome = arquivo.name.lower()
-
-            if (
-                nome.endswith(".crdownload")
-                or
-                nome.endswith(".tmp")
-                or
-                nome.endswith(".part")
-            ):
-                temporarios.append(arquivo)
-
-        # ----------------------------------------------------
-        # Novos HTMLs
-        # ----------------------------------------------------
-
-        novos = []
-
-        for arquivo in arquivos:
-
-            if not arquivo.is_file():
-                continue
-
-            if arquivo.name in arquivos_antes:
-                continue
-
-            if arquivo.suffix.lower() not in {
-                ".html",
-                ".htm"
-            }:
-                continue
-
-            novos.append(
-                arquivo
-            )
+        novos = [
+            arquivo for arquivo in arquivos
+            if arquivo.is_file()
+            and arquivo.name not in arquivos_antes
+            and arquivo.suffix.lower() in {".html", ".htm"}
+        ]
 
         if novos and not temporarios:
-
-            arquivo = max(
-                novos,
-                key=lambda x: x.stat().st_mtime
-            )
-
-            # ------------------------------------------------
-            # Confirmar que terminou de gravar
-            # ------------------------------------------------
+            arquivo = max(novos, key=lambda x: x.stat().st_mtime)
 
             try:
-
-                tamanho_anterior = (
-                    arquivo.stat().st_size
-                )
-
-                time.sleep(1)
-
+                tamanho_anterior = arquivo.stat().st_size
+                time.sleep(0.5)
                 if not arquivo.exists():
                     continue
 
-                tamanho_atual = (
-                    arquivo.stat().st_size
-                )
-
-                if (
-                    tamanho_atual == tamanho_anterior
-                    and
-                    tamanho_atual > 0
-                ):
-
-                    print(
-                        f"✓ HTML baixado: "
-                        f"{arquivo.name}"
-                    )
-
+                tamanho_atual = arquivo.stat().st_size
+                if tamanho_atual == tamanho_anterior and tamanho_atual > 0:
+                    print(f"✓ HTML baixado: {arquivo.name}")
                     return arquivo
-
-            except (
-                FileNotFoundError,
-                OSError
-            ):
+            except (FileNotFoundError, OSError):
                 continue
 
-        time.sleep(0.5)
+        time.sleep(0.25)
 
-    # ========================================================
-    # DIAGNÓSTICO
-    # ========================================================
-
-    print()
-    print("!" * 70)
     print("❌ DOWNLOAD HTML NÃO CONFIRMADO")
-    print("!" * 70)
-
-    try:
-
-        arquivos_finais = [
-            arquivo.name
-            for arquivo in PASTA_HTML.iterdir()
-            if arquivo.is_file()
-        ]
-
-        print(
-            "Arquivos encontrados na pasta HTML:"
-        )
-
-        if arquivos_finais:
-
-            for nome in arquivos_finais[-20:]:
-                print(
-                    f"   - {nome}"
-                )
-
-        else:
-
-            print(
-                "   Nenhum arquivo encontrado."
-            )
-
-    except Exception as erro:
-
-        print(
-            f"⚠ Erro listando pasta HTML: {erro}"
-        )
-
     return None
-
-
-# ============================================================
-# RENOMEAR HTML
-# ============================================================
-
-def renomear_html(
-    arquivo,
-    placa
-):
+def renomear_html(arquivo, placa, pasta=None):
+    pasta = Path(pasta) if pasta else PASTA_HTML
+    pasta.mkdir(parents=True, exist_ok=True)
 
     nome = (
         f"{nome_seguro(placa)}_"
         f"{datetime.now().strftime('%Y%m%d_%H%M%S')}.html"
     )
-
-    destino = (
-        PASTA_HTML /
-        nome
-    )
+    destino = pasta / nome
 
     if destino.exists():
-
         destino.unlink()
 
-    shutil.move(
-        str(arquivo),
-        str(destino)
-    )
-
+    shutil.move(str(arquivo), str(destino))
     return destino
-
-
-# ============================================================
-# PROCESSAR PLACA
-# ============================================================
-
 def processar_placa(
     driver,
     aba_principal,
     placa,
     inicio,
-    fim
+    fim,
+    pasta_html=None
 ):
-
     aba_relatorio = None
+    pasta_html = Path(pasta_html) if pasta_html else PASTA_HTML
+    pasta_html.mkdir(parents=True, exist_ok=True)
 
     try:
-
         print()
         print("#" * 70)
-        print(
-            f"PROCESSANDO: {placa}"
-        )
+        print(f"PROCESSANDO: {placa}")
         print("#" * 70)
 
-        driver.switch_to.window(
-            aba_principal
-        )
+        driver.switch_to.window(aba_principal)
+        driver.get(URL_RELATORIO_POSICAO)
 
-        driver.get(
-            URL_RELATORIO_POSICAO
-        )
-
-        WebDriverWait(
-            driver,
-            TIMEOUT
-        ).until(
-            lambda d:
-            d.execute_script(
-                "return document.readyState"
-            ) == "complete"
+        WebDriverWait(driver, TIMEOUT).until(
+            lambda d: d.execute_script("return document.readyState") == "complete"
         )
 
         preencher_datetime(
-            driver,
-            "data_inicial",
-            inicio.strftime(
-                "%Y-%m-%dT%H:%M"
-            )
+            driver, "data_inicial",
+            inicio.strftime("%Y-%m-%dT%H:%M")
         )
-
         preencher_datetime(
-            driver,
-            "data_final",
-            fim.strftime(
-                "%Y-%m-%dT%H:%M"
-            )
+            driver, "data_final",
+            fim.strftime("%Y-%m-%dT%H:%M")
         )
 
-        print(
-            "✓ Datas preenchidas."
-        )
+        configurar_relatorio_posicao(driver)
+        selecionar_placa_autovision(driver, placa)
 
-        configurar_relatorio_posicao(
-            driver
-        )
+        aba_relatorio = clicar_relatorio_analitico(driver)
 
-        selecionar_placa_autovision(
-            driver,
-            placa
-        )
-
-        aba_relatorio = (
-            clicar_relatorio_analitico(
-                driver
-            )
-        )
-
-        possui_dados = (
-            aguardar_relatorio(
-                driver
-            )
-        )
+        possui_dados = aguardar_relatorio(driver)
 
         if not possui_dados:
-
-            print(
-                f"⚠ {placa}: sem registros."
-            )
-
+            print(f"⚠ {placa}: sem registros.")
             return None
 
-        # Espera o carregamento assíncrono do Município antes de exportar.
+        # Pequeno atraso inicial para permitir que os campos dinâmicos
+        # do HTML apareçam antes da verificação do Município.
+        time.sleep(1.5)
+
+        # Se Município ainda estiver com imagem/emoji, aguarda até virar texto.
         aguardar_municipio_carregado(driver)
 
-        arquivos_antes = listar_htmls()
+        arquivos_antes = listar_htmls(pasta_html)
+        clicar_icone_html(driver)
 
-        clicar_icone_html(
-            driver
-        )
-
-        print(
-            "⬇ Aguardando download HTML..."
-        )
-
-        arquivo = (
-            esperar_download_html(
-                arquivos_antes
-            )
+        arquivo = esperar_download_html(
+            arquivos_antes,
+            pasta=pasta_html
         )
 
         if arquivo is None:
+            raise TimeoutException("HTML não foi baixado.")
 
-            raise TimeoutException(
-                "HTML não foi baixado."
-            )
-
-        arquivo_final = (
-            renomear_html(
-                arquivo,
-                placa
-            )
+        arquivo_final = renomear_html(
+            arquivo,
+            placa,
+            pasta=pasta_html
         )
 
-        print(
-            f"✓ HTML salvo: "
-            f"{arquivo_final.name}"
-        )
-
+        print(f"✓ HTML salvo: {arquivo_final.name}")
         return arquivo_final
 
     finally:
-
         try:
-
             if (
                 aba_relatorio
-                and
-                aba_relatorio
-                in driver.window_handles
+                and aba_relatorio in driver.window_handles
             ):
-
                 driver.close()
-
         except Exception:
             pass
 
         try:
-
-            if (
-                aba_principal
-                in driver.window_handles
-            ):
-
-                driver.switch_to.window(
-                    aba_principal
-                )
-
+            if aba_principal in driver.window_handles:
+                driver.switch_to.window(aba_principal)
         except Exception:
             pass
-
-
-# ============================================================
-# PROCESSAR TODAS AS PLACAS
-# ============================================================
-
 def processar_placas(
     driver,
     inicio,
-    fim
+    fim,
+    placas=None,
+    pasta_html=None
 ):
     arquivos_html = []
-
     aba_principal = driver.current_window_handle
-    total = len(PLACAS)
+    lista = list(placas if placas is not None else PLACAS)
+    total = len(lista)
+    pasta_html = Path(pasta_html) if pasta_html else PASTA_HTML
+    pasta_html.mkdir(parents=True, exist_ok=True)
 
-    for indice, placa in enumerate(PLACAS, start=1):
+    for indice, placa in enumerate(lista, start=1):
         print()
         print(f"[{indice}/{total}]")
 
         arquivo = None
+
         for tentativa in range(1, MAX_TENTATIVAS_POR_PLACA + 1):
             try:
                 print(
@@ -2689,6 +2361,7 @@ def processar_placas(
                     placa,
                     inicio,
                     fim,
+                    pasta_html=pasta_html
                 )
 
                 if arquivo:
@@ -2709,28 +2382,21 @@ def processar_placas(
                 if tentativa < MAX_TENTATIVAS_POR_PLACA:
                     time.sleep(PAUSA_APOS_FALHA_PLACA)
 
-        if arquivo is None and tentativa >= MAX_TENTATIVAS_POR_PLACA:
+        if arquivo is None:
             print(
-                f"⚠ {placa} não foi concluída após "
-                f"{MAX_TENTATIVAS_POR_PLACA} tentativa(s). "
+                f"⚠ {placa} não foi concluída. "
                 "Continuando o lote."
             )
 
         if indice % PAUSA_CADA_N_PLACAS == 0 and indice < total:
             print(
-                f"☕ Pausa de estabilidade após {indice} placas..."
+                f"☕ Pausa curta de estabilidade após {indice} placas..."
             )
             time.sleep(PAUSA_LOTE_GRANDE)
 
         time.sleep(INTERVALO_ENTRE_PLACAS)
 
     return arquivos_html
-
-
-# ============================================================
-# DATA / ARQUIVO
-# ============================================================
-
 def normalizar_data(valor):
     """Sempre retorna datetime.date, evitando .date() duplicado."""
     if valor is None:
@@ -2793,38 +2459,31 @@ def obter_placa_arquivo(arquivo):
 
 
 def listar_htmls_periodo(inicio, fim):
+    inicio_date = normalizar_data(inicio)
+    fim_date = normalizar_data(fim)
 
-    inicio = normalizar_data(inicio)
-    fim = normalizar_data(fim)
+    if inicio_date is None or fim_date is None:
+        return []
 
     arquivos = []
 
-    for arquivo in PASTA_HTML.iterdir():
+    if not PASTA_HTML.exists():
+        return arquivos
 
-        if (
-            not arquivo.is_file()
-            or arquivo.suffix.lower()
-            not in {".html", ".htm"}
-        ):
+    for arquivo in PASTA_HTML.rglob("*"):
+        if not arquivo.is_file() or arquivo.suffix.lower() not in {".html", ".htm"}:
             continue
 
         data = obter_data_arquivo(arquivo)
 
-        # Arquivos sem data no padrão também são mantidos.
-        if (
-            data is None
-            or (
-                inicio <= data <= fim
-            )
-        ):
+        # Arquivo sem padrão de data: mantém para compatibilidade.
+        if data is None or inicio_date <= data <= fim_date:
             arquivos.append(arquivo)
 
     return sorted(
         arquivos,
         key=lambda x: x.stat().st_mtime
     )
-
-
 def nome_coluna_normalizado(nome):
 
     return re.sub(
@@ -2945,44 +2604,66 @@ def limpar_motorista(valor):
     return texto
 
 
-def enderecos_compativeis(a, b):
+def _extrair_nucleo_endereco(valor):
+    texto = normalizar_texto(valor)
+    texto = re.sub(r"[^A-Z0-9 ]", " ", texto)
+    texto = re.sub(r"\s+", " ", texto).strip()
 
+    # Remove componentes muito específicos que podem variar entre fontes.
+    texto = re.sub(
+        r"\b(NUMERO|N|NR|NO|Nº|CEP|CASA|LOTE|QUADRA)\s*[A-Z0-9-]*\b",
+        " ",
+        texto
+    )
+
+    texto = re.sub(
+        r"\b(RUA|R|AVENIDA|AV|RODOVIA|ROD|ESTRADA|EST|TRAVESSA|TV|ALAMEDA|AL)\b",
+        " ",
+        texto
+    )
+
+    texto = re.sub(r"\s+", " ", texto).strip()
+
+    return texto
+
+
+def _nome_rua_endereco(valor):
+    texto = _extrair_nucleo_endereco(valor)
+    if not texto:
+        return ""
+
+    # Usa os primeiros tokens, que normalmente representam o nome da via.
+    tokens = texto.split()
+    return " ".join(tokens[:4])
+
+
+def enderecos_compativeis(a, b):
     if not a or not b:
         return True
 
-    a = normalizar_texto(a)
-    b = normalizar_texto(b)
+    a_norm = normalizar_texto(a)
+    b_norm = normalizar_texto(b)
 
-    a = re.sub(
-        r"[^A-Z0-9 ]",
-        " ",
-        a
-    )
+    a_limpo = re.sub(r"[^A-Z0-9 ]", " ", a_norm)
+    b_limpo = re.sub(r"[^A-Z0-9 ]", " ", b_norm)
+    a_limpo = re.sub(r"\s+", " ", a_limpo).strip()
+    b_limpo = re.sub(r"\s+", " ", b_limpo).strip()
 
-    b = re.sub(
-        r"[^A-Z0-9 ]",
-        " ",
-        b
-    )
+    if a_limpo in b_limpo or b_limpo in a_limpo:
+        return True
 
-    a = re.sub(
-        r"\s+",
-        " ",
-        a
-    ).strip()
+    rua_a = _nome_rua_endereco(a)
+    rua_b = _nome_rua_endereco(b)
 
-    b = re.sub(
-        r"\s+",
-        " ",
-        b
-    ).strip()
+    if rua_a and rua_b:
+        tokens_a = set(rua_a.split())
+        tokens_b = set(rua_b.split())
+        inter = tokens_a & tokens_b
 
-    return (
-        a in b
-        or b in a
-    )
+        if len(inter) >= 2:
+            return True
 
-
+    return False
 def ler_html_telemetria(arquivo):
 
     try:
@@ -3088,6 +2769,18 @@ def ler_html_telemetria(arquivo):
             ]
         )
 
+        col_dist = encontrar_coluna(
+            df,
+            [
+                "Distância (Km)",
+                "Distancia (Km)",
+                "Distância (KM)",
+                "Distancia (KM)",
+                "Distância",
+                "Distancia",
+            ]
+        )
+
         if col_data is None:
             continue
 
@@ -3131,6 +2824,14 @@ def ler_html_telemetria(arquivo):
                         converter_float(
                             row.get(
                                 col_vel,
+                                0
+                            )
+                        ),
+
+                    "DISTANCIA_KM":
+                        converter_float(
+                            row.get(
+                                col_dist,
                                 0
                             )
                         ),
@@ -3390,6 +3091,10 @@ def carregar_fonte_abastecimento(
             (df["DATA_ABAST"] >= inicio_ts)
             &
             (df["DATA_ABAST"] <= fim_ts)
+            &
+            (df["DATA_ABAST"].dt.hour >= HORA_INICIO_OPERACIONAL)
+            &
+            (df["DATA_ABAST"].dt.hour <= HORA_FIM_OPERACIONAL)
         ].copy()
 
         placas_validas = {
@@ -3700,6 +3405,60 @@ def geocodificar_endereco(
     return None
 
 
+
+def avaliar_divergencia_endereco(
+    endereco_abast,
+    endereco_t,
+    latf=0,
+    lonf=0,
+    latt=0,
+    lont=0
+):
+    """
+    Combina texto + coordenadas.
+
+    Regra importante:
+    se os textos indicarem a mesma rua/endereço, não gera divergência
+    somente porque o geocodificador devolveu coordenadas distantes.
+    Isso evita falsos positivos em endereços truncados, como R. São Pedro.
+    """
+    textualmente_compativel = enderecos_compativeis(
+        endereco_abast,
+        endereco_t
+    )
+
+    distancia_end = None
+
+    if (
+        latf and lonf and latt and lont
+    ):
+        try:
+            distancia_end = distancia_metros(
+                latf, lonf, latt, lont
+            )
+        except Exception:
+            distancia_end = None
+
+    if textualmente_compativel:
+        return False, distancia_end, "ENDEREÇOS TEXTUALMENTE COMPATÍVEIS"
+
+    if distancia_end is not None:
+        return (
+            distancia_end > RAIO_DIVERGENCIA_ENDERECO_METROS,
+            distancia_end,
+            (
+                "DISTÂNCIA ENTRE COORDENADAS ACIMA DO LIMITE"
+                if distancia_end > RAIO_DIVERGENCIA_ENDERECO_METROS
+                else "COORDENADAS COMPATÍVEIS"
+            ),
+        )
+
+    return (
+        False,
+        None,
+        "SEM COORDENADAS SUFICIENTES PARA CONFIRMAR DIVERGÊNCIA"
+    )
+
 # ============================================================
 # CRUZAMENTO ABASTECIMENTO X TELEMETRIA
 # ============================================================
@@ -3708,382 +3467,227 @@ def cruzar_abastecimento_telemetria(
     telemetria,
     abastecimento
 ):
-
-    if (
-        telemetria.empty
-        or abastecimento.empty
-    ):
+    if telemetria.empty or abastecimento.empty:
         return pd.DataFrame()
 
     eventos = []
 
-    for _, fuelrow in abastecimento.iterrows():
+    # Indexação por placa e data reduz muito o custo de comparar
+    # cada abastecimento com todas as linhas de telemetria.
+    telemetria_idx = telemetria.copy()
+    telemetria_idx["DATA_HORA"] = pd.to_datetime(
+        telemetria_idx["DATA_HORA"],
+        errors="coerce"
+    )
+    telemetria_idx = telemetria_idx[
+        telemetria_idx["DATA_HORA"].notna()
+    ].copy()
+    telemetria_idx["DATA"] = telemetria_idx["DATA_HORA"].dt.date
 
-        f = extrair_dados_abastecimento(
-            fuelrow
+    grupos = {
+        (placa, data): grupo
+        for (placa, data), grupo in telemetria_idx.groupby(
+            ["PLACA", "DATA"],
+            sort=False
         )
+    }
+
+    for _, fuelrow in abastecimento.iterrows():
+        f = extrair_dados_abastecimento(fuelrow)
 
         placa = f["PLACA"]
-
         data_abast = pd.to_datetime(
             f["DATA_ABAST"],
             errors="coerce"
         )
 
-        if (
-            not placa
-            or pd.isna(data_abast)
+        if not placa or pd.isna(data_abast):
+            continue
+
+        # Regra operacional: somente 08:00–17:00.
+        if not (
+            HORA_INICIO_OPERACIONAL
+            <= data_abast.hour
+            <= HORA_FIM_OPERACIONAL
         ):
             continue
 
-        candidatos = telemetria[
-            telemetria["PLACA"]
-            == placa
-        ].copy()
-
-        if candidatos.empty:
-            continue
-
-        candidatos[
-            "DATA_HORA"
-        ] = pd.to_datetime(
-            candidatos["DATA_HORA"],
-            errors="coerce"
+        candidatos = grupos.get(
+            (placa, data_abast.date())
         )
 
-        candidatos = candidatos[
-            candidatos["DATA_HORA"].notna()
-        ].copy()
-
-        candidatos = candidatos[
-            candidatos[
-                "DATA_HORA"
-            ].dt.date
-            == data_abast.date()
-        ].copy()
-
-        if candidatos.empty:
+        if candidatos is None or candidatos.empty:
             continue
 
-        candidatos[
-            "DIF_MIN"
-        ] = (
-            candidatos["DATA_HORA"]
-            - data_abast
+        candidatos = candidatos.copy()
+        candidatos["DIF_MIN"] = (
+            candidatos["DATA_HORA"] - data_abast
         ).abs().dt.total_seconds() / 60.0
 
         candidatos = candidatos[
-            candidatos["DIF_MIN"]
-            <= TOLERANCIA_ABASTECIMENTO_MIN
-        ].sort_values(
-            "DIF_MIN"
-        )
+            candidatos["DIF_MIN"] <= TOLERANCIA_ABASTECIMENTO_MIN
+        ].sort_values("DIF_MIN")
 
         if candidatos.empty:
             continue
 
         t = candidatos.iloc[0]
+        dif = float(t["DIF_MIN"])
 
-        dif = float(
-            t["DIF_MIN"]
-        )
-
-        motorista_abast = (
-            f["MOTORISTA_ABAST"]
-        )
-
+        motorista_abast = f["MOTORISTA_ABAST"]
         motorista_t = str(
-            t.get(
-                "MOTORISTA",
-                ""
-            )
+            t.get("MOTORISTA", "")
             or ""
         ).strip()
 
-        motorista_abast_norm = (
-            f[
-                "MOTORISTA_ABAST_NORMALIZADO"
-            ]
-        )
+        motorista_abast_norm = f["MOTORISTA_ABAST_NORMALIZADO"]
+        motorista_t_norm = limpar_motorista(motorista_t)
 
-        motorista_t_norm = (
-            limpar_motorista(
-                motorista_t
-            )
-        )
-
-        endereco_abast = (
-            f["ENDERECO_ABAST"]
-        )
-
+        endereco_abast = f["ENDERECO_ABAST"]
         endereco_t = str(
-            t.get(
-                "ENDERECO",
-                ""
-            )
+            t.get("ENDERECO", "")
             or ""
         ).strip()
 
-        base = {
-            **f,
+        latf = f["LATITUDE_ABAST"]
+        lonf = f["LONGITUDE_ABAST"]
+        latt = converter_float(t.get("LATITUDE", 0))
+        lont = converter_float(t.get("LONGITUDE", 0))
 
-            "DATA_HORA_TELEMETRIA":
-                t["DATA_HORA"],
-
-            "DIF_MIN":
-                round(
-                    dif,
-                    2
-                ),
-
-            "Motorista abastecimento":
-                motorista_abast,
-
-            "Motoristas Telemetria":
-                motorista_t,
-
-            "ENDERECO_TELEMETRIA":
-                endereco_t,
-        }
-
-        # --------------------------------------------------------
-        # MOTORISTA NÃO IDENTIFICADO
-        # --------------------------------------------------------
-
-        if not motorista_t_norm:
-
-            eventos.append(
-                {
-                    **base,
-
-                    "TIPO_DESVIO":
-                        "Motorista não identificado",
-
-                    "CRITICIDADE":
-                        "MEDIA",
-
-                    "DETALHE":
-                        (
-                            f"Motorista abastecimento: "
-                            f"{motorista_abast or 'NÃO INFORMADO'} | "
-                            f"Motoristas Telemetria: "
-                            f"NÃO INFORMADO | "
-                            f"Data/hora: "
-                            f"{data_abast.strftime('%d/%m/%Y %H:%M:%S')} | "
-                            f"Diferença: "
-                            f"{dif:.2f} min"
-                        ),
-                }
-            )
-
-        # --------------------------------------------------------
-        # MOTORISTA DIFERENTE
-        # --------------------------------------------------------
-
-        elif (
-            motorista_abast_norm
-            and motorista_t_norm
-            and motorista_abast_norm
-            != motorista_t_norm
-        ):
-
-            eventos.append(
-                {
-                    **base,
-
-                    "TIPO_DESVIO":
-                        "MOTORISTA DIFERENTE",
-
-                    "CRITICIDADE":
-                        "ALTA",
-
-                    "DETALHE":
-                        (
-                            f"Motorista abastecimento: "
-                            f"{motorista_abast} | "
-                            f"Motoristas Telemetria: "
-                            f"{motorista_t} | "
-                            f"Data/hora: "
-                            f"{data_abast.strftime('%d/%m/%Y %H:%M:%S')} | "
-                            f"Diferença: "
-                            f"{dif:.2f} min"
-                        ),
-                }
-            )
-
-        # --------------------------------------------------------
-        # ENDEREÇO DIVERGENTE
-        # --------------------------------------------------------
-
-        endereco_div = False
-        distancia_end = None
-
-        latf = f[
-            "LATITUDE_ABAST"
-        ]
-
-        lonf = f[
-            "LONGITUDE_ABAST"
-        ]
-
-        latt = converter_float(
-            t.get(
-                "LATITUDE",
-                0
-            )
-        )
-
-        lont = converter_float(
-            t.get(
-                "LONGITUDE",
-                0
-            )
-        )
-
+        # Se não houver coordenadas, tenta geocodificar, mas não obriga
+        # uma nova consulta quando o texto já é claramente compatível.
         if (
-            not (latf and lonf)
+            not enderecos_compativeis(endereco_abast, endereco_t)
+            and not (latf and lonf)
             and endereco_abast
         ):
-
-            geo = geocodificar_endereco(
-                endereco_abast
-            )
-
+            geo = geocodificar_endereco(endereco_abast)
             if geo:
                 latf, lonf = geo
 
         if (
-            not (latt and lont)
+            not enderecos_compativeis(endereco_abast, endereco_t)
+            and not (latt and lont)
             and endereco_t
         ):
-
-            geo = geocodificar_endereco(
-                endereco_t
-            )
-
+            geo = geocodificar_endereco(endereco_t)
             if geo:
                 latt, lont = geo
 
-        if (
-            latf
-            and lonf
-            and latt
-            and lont
+        endereco_div, distancia_end, criterio_end = avaliar_divergencia_endereco(
+            endereco_abast,
+            endereco_t,
+            latf,
+            lonf,
+            latt,
+            lont
+        )
+
+        # Verifica IG=L e velocidade=0 no registro correspondente.
+        motor_parado = motor_ligado_parado(t)
+
+        base = {
+            **f,
+            "DATA_HORA_TELEMETRIA": t["DATA_HORA"],
+            "DIF_MIN": round(dif, 2),
+            "Motorista abastecimento": motorista_abast,
+            "Motoristas Telemetria": motorista_t,
+            "ENDERECO_TELEMETRIA": endereco_t,
+            "DISTANCIA_ENDERECOS_M": (
+                round(float(distancia_end), 1)
+                if distancia_end is not None else None
+            ),
+            "CRITERIO_ENDERECO": criterio_end,
+            "IG_TELEMETRIA": t.get("IG", ""),
+            "VELOCIDADE_TELEMETRIA": converter_float(
+                t.get("VELOCIDADE", 0)
+            ),
+            "DISTANCIA_KM": converter_float(
+                t.get("DISTANCIA_KM", 0)
+            ),
+            "DURACAO_MINUTOS": 0.0,
+        }
+
+        # MOTORISTA NÃO IDENTIFICADO
+        if not motorista_t_norm:
+            eventos.append({
+                **base,
+                "TIPO_DESVIO": "Motorista não identificado",
+                "CRITICIDADE": "MEDIA",
+                "DETALHE": (
+                    f"Motorista abastecimento: "
+                    f"{motorista_abast or 'NÃO INFORMADO'} | "
+                    f"Motorista Telemetria: NÃO INFORMADO | "
+                    f"Data/hora: {data_abast.strftime('%d/%m/%Y %H:%M:%S')} | "
+                    f"Diferença: {dif:.2f} min"
+                ),
+            })
+
+        # MOTORISTA DIFERENTE
+        elif (
+            motorista_abast_norm
+            and motorista_t_norm
+            and motorista_abast_norm != motorista_t_norm
         ):
+            eventos.append({
+                **base,
+                "TIPO_DESVIO": "MOTORISTA DIFERENTE",
+                "CRITICIDADE": "ALTA",
+                "DETALHE": (
+                    f"Motorista abastecimento: {motorista_abast} | "
+                    f"Motorista Telemetria: {motorista_t} | "
+                    f"Data/hora: {data_abast.strftime('%d/%m/%Y %H:%M:%S')} | "
+                    f"Diferença: {dif:.2f} min"
+                ),
+            })
 
-            distancia_end = (
-                distancia_metros(
-                    latf,
-                    lonf,
-                    latt,
-                    lont
-                )
-            )
-
-            endereco_div = (
-                distancia_end
-                > RAIO_DIVERGENCIA_ENDERECO_METROS
-            )
-
-        else:
-
-            endereco_div = not enderecos_compativeis(
-                endereco_abast,
-                endereco_t
-            )
-
+        # ENDEREÇO DIVERGENTE
         if endereco_div:
-
             detalhe = (
                 f"Abastecimento: "
                 f"{endereco_abast or f['POSTO_ABAST'] or 'NÃO INFORMADO'} | "
-                f"Telemetria: "
-                f"{endereco_t or 'NÃO INFORMADO'} | "
-                f"Data/hora: "
-                f"{data_abast.strftime('%d/%m/%Y %H:%M:%S')} | "
-                f"Diferença: "
-                f"{dif:.2f} min"
+                f"Telemetria: {endereco_t or 'NÃO INFORMADO'} | "
+                f"Data/hora: {data_abast.strftime('%d/%m/%Y %H:%M:%S')} | "
+                f"Diferença: {dif:.2f} min | "
+                f"Critério: {criterio_end}"
             )
 
             if distancia_end is not None:
-
                 detalhe += (
-                    f" | Distância: "
-                    f"{distancia_end:.1f} m"
+                    f" | Distância: {distancia_end:.1f} m"
                 )
 
-            eventos.append(
-                {
-                    **base,
+            eventos.append({
+                **base,
+                "TIPO_DESVIO": "ENDEREÇO DIVERGENTE",
+                "CRITICIDADE": (
+                    "ALTA"
+                    if distancia_end is not None and distancia_end > 500
+                    else "MEDIA"
+                ),
+                "DETALHE": detalhe,
+            })
 
-                    "TIPO_DESVIO":
-                        "ENDEREÇO DIVERGENTE",
-
-                    "CRITICIDADE":
-                        (
-                            "ALTA"
-                            if (
-                                distancia_end
-                                is not None
-                                and distancia_end > 500
-                            )
-                            else "MEDIA"
-                        ),
-
-                    "DISTANCIA_ENDERECOS_M":
-                        (
-                            round(
-                                distancia_end,
-                                1
-                            )
-                            if distancia_end
-                            is not None
-                            else None
-                        ),
-
-                    "DETALHE":
-                        detalhe,
-                }
-            )
-
-        # --------------------------------------------------------
         # MOTOR LIGADO NO ABASTECIMENTO
-        # --------------------------------------------------------
-
         if (
-            dif
-            <= TOLERANCIA_IGNICAO_ABASTECIMENTO_MIN
-            and motor_ligado_parado(t)
+            dif <= TOLERANCIA_IGNICAO_ABASTECIMENTO_MIN
+            and motor_parado
         ):
-
-            eventos.append(
-                {
-                    **base,
-
-                    "TIPO_DESVIO":
-                        "MOTOR LIGADO NO ABASTECIMENTO",
-
-                    "CRITICIDADE":
-                        "ALTA",
-
-                    "DETALHE":
-                        (
-                            "IG = L e Vel (Km/h) = 0,0 "
-                            "no registro de telemetria "
-                            "correspondente ao abastecimento. "
-                            f"Diferença: {dif:.2f} min."
-                        ),
-                }
-            )
+            eventos.append({
+                **base,
+                "TIPO_DESVIO": "MOTOR LIGADO NO ABASTECIMENTO",
+                "CRITICIDADE": "ALTA",
+                "DETALHE": (
+                    "IG = L e Vel (Km/h) = 0,0 "
+                    "no registro de telemetria correspondente ao abastecimento. "
+                    f"Diferença: {dif:.2f} min."
+                ),
+            })
 
     if not eventos:
         return pd.DataFrame()
 
-    return pd.DataFrame(
-        eventos
-    )
-
-
+    return pd.DataFrame(eventos)
 def identificar_desvios_local(
     df
 ):
@@ -4099,23 +3703,10 @@ def identificar_desvios_local(
     return pd.DataFrame()
 
 
-def motor_ligado_parado(
-    row
-):
-
-    return (
-        normalizar_texto(
-            row["IG"]
-        ) == "L"
-        and
-        abs(
-            float(
-                row["VELOCIDADE"]
-            )
-        ) < 0.01
-    )
-
-
+def motor_ligado_parado(row):
+    ig = normalizar_texto(row.get("IG", ""))
+    velocidade = converter_float(row.get("VELOCIDADE", 0))
+    return ig == "L" and abs(velocidade) < 0.01
 def distancia_metros(
     lat1,
     lon1,
@@ -4393,31 +3984,29 @@ def montar_parada(
 # LOCAL / OSM
 # ============================================================
 
-def classificar_tipo_local(
-    tags
-):
+def classificar_tipo_local(tags):
+    nome = normalizar_texto(tags.get("name", ""))
+
+    if re.search(
+        r"\bCOMPESA\b|\bETA\b|\bETE\b|ESTACAO DE TRATAMENTO|UNIDADE OPERACIONAL",
+        nome
+    ):
+        return (
+            "C",
+            "UNIDADE OPERACIONAL"
+        )
 
     for chave in OSM_TAG_KEYS:
-
         if chave not in tags:
             continue
 
-        valor = str(
-            tags.get(
-                chave,
-                ""
-            )
-        ).strip().lower()
+        valor = str(tags.get(chave, "")).strip().lower()
 
         nivel = OSM_CRITICIDADE_MAP.get(
-            (
-                chave,
-                valor
-            )
+            (chave, valor)
         )
 
         if nivel:
-
             return (
                 nivel,
                 f"{chave}: {valor}"
@@ -4427,8 +4016,6 @@ def classificar_tipo_local(
         "C",
         "Outro"
     )
-
-
 def consultar_osm_proximo(
     lat,
     lon
@@ -4445,6 +4032,7 @@ def consultar_osm_proximo(
       nwr(around:{RAIO_BUSCA_POI_METROS},{lat},{lon})[leisure];
       nwr(around:{RAIO_BUSCA_POI_METROS},{lat},{lon})[natural];
       nwr(around:{RAIO_BUSCA_POI_METROS},{lat},{lon})[aeroway];
+      nwr(around:{RAIO_BUSCA_POI_METROS},{lat},{lon})[name~"COMPESA|ETA|ETE|ESTACAO DE TRATAMENTO",i];
     );
     out center tags;
     """
@@ -4763,256 +4351,174 @@ def consultar_google_places(
 # VALIDAR LOCAL DAS PARADAS
 # ============================================================
 
-def validar_local_paradas(
-    df
-):
+def _eh_unidade_operacional(nome, categoria="", endereco=""):
+    texto = normalizar_texto(
+        f"{nome} {categoria} {endereco}"
+    )
+    return bool(
+        re.search(
+            r"\bCOMPESA\b|\bETA\b|\bETE\b|"
+            r"\bUNIDADE OPERACIONAL\b|"
+            r"\bESTACAO DE TRATAMENTO\b",
+            texto
+        )
+    )
 
+
+def validar_local_paradas(df):
     if df.empty:
         return df
 
     resultado = df.copy()
 
-    resultado[
-        "DISTANCIA_LOCAL_M"
-    ] = pd.to_numeric(
-        resultado[
-            "DISTANCIA_LOCAL_M"
-        ],
+    resultado["DISTANCIA_LOCAL_M"] = pd.to_numeric(
+        resultado["DISTANCIA_LOCAL_M"],
         errors="coerce"
     ).astype("Float64")
 
     peso = CRITICIDADE_PESO
 
     for idx, row in resultado.iterrows():
-
-        lat = converter_float(
-            row.get(
-                "LATITUDE",
-                0
-            )
-        )
-
-        lon = converter_float(
-            row.get(
-                "LONGITUDE",
-                0
-            )
-        )
-
-        duracao = converter_float(
-            row.get(
-                "DURACAO_MINUTOS",
-                0
-            )
-        )
+        lat = converter_float(row.get("LATITUDE", 0))
+        lon = converter_float(row.get("LONGITUDE", 0))
+        duracao = converter_float(row.get("DURACAO_MINUTOS", 0))
 
         melhor = None
+        unidade_operacional = None
 
         if lat and lon:
-
-            chave = (
-                round(lat, 4),
-                round(lon, 4)
-            )
+            chave = (round(lat, 4), round(lon, 4))
 
             if chave not in _CACHE_LOCAIS:
-
                 locais = []
 
                 if GOOGLE_PLACES_API_KEY:
-
-                    print(
-                        "🔎 Google Places API: "
-                        "consultando primeiro..."
-                    )
-
-                    locais = (
-                        consultar_google_places(
-                            lat,
-                            lon
-                        )
-                    )
+                    print("🔎 Google Places API: consultando primeiro...")
+                    locais = consultar_google_places(lat, lon)
 
                 if not locais:
-
                     print(
-                        "⚠ Google Places sem "
-                        "resultado/disponível. "
-                        "Usando OSM/Overpass "
-                        "como fallback..."
+                        "⚠ Google Places sem resultado/disponível. "
+                        "Usando OSM/Overpass como fallback..."
                     )
+                    locais = consultar_osm_proximo(lat, lon)
 
-                    locais = (
-                        consultar_osm_proximo(
-                            lat,
-                            lon
-                        )
-                    )
-
-                _CACHE_LOCAIS[
-                    chave
-                ] = locais
-
+                _CACHE_LOCAIS[chave] = locais
             else:
+                locais = _CACHE_LOCAIS[chave]
 
-                locais = _CACHE_LOCAIS[
-                    chave
-                ]
-
+            # Primeiro procura unidade operacional COMPESA/ETA/ETE.
             for local in locais:
-
                 distancia = distancia_metros(
-                    lat,
-                    lon,
-                    local["lat"],
-                    local["lon"]
+                    lat, lon,
+                    local.get("lat", 0),
+                    local.get("lon", 0)
                 )
-
-                candidato = {
-                    **local,
-                    "distancia":
-                        round(
-                            distancia,
-                            1
-                        )
-                }
-
-                if (
-                    distancia
-                    > RAIO_BUSCA_POI_METROS
+                if distancia <= RAIO_BUSCA_POI_METROS and _eh_unidade_operacional(
+                    local.get("nome", ""),
+                    local.get("categoria", ""),
+                    row.get("ENDERECO", "")
                 ):
-                    continue
+                    unidade_operacional = {
+                        **local,
+                        "distancia": round(distancia, 1)
+                    }
+                    break
 
-                if (
-                    melhor is None
-                    or
-                    peso[
-                        candidato[
-                            "criticidade"
-                        ]
-                    ]
-                    >
-                    peso[
-                        melhor[
-                            "criticidade"
-                        ]
-                    ]
-                    or
-                    (
-                        peso[
-                            candidato[
-                                "criticidade"
-                            ]
-                        ]
-                        ==
-                        peso[
-                            melhor[
-                                "criticidade"
-                            ]
-                        ]
-                        and
-                        distancia
-                        <
-                        melhor[
-                            "distancia"
-                        ]
+            # Só procura lazer/comércio se NÃO houver unidade operacional.
+            if unidade_operacional is None:
+                for local in locais:
+                    distancia = distancia_metros(
+                        lat, lon,
+                        local["lat"],
+                        local["lon"]
                     )
-                ):
 
-                    melhor = candidato
+                    if distancia > RAIO_BUSCA_POI_METROS:
+                        continue
+
+                    candidato = {
+                        **local,
+                        "distancia": round(distancia, 1)
+                    }
+
+                    if (
+                        _eh_unidade_operacional(
+                            candidato.get("nome", ""),
+                            candidato.get("categoria", ""),
+                            row.get("ENDERECO", "")
+                        )
+                    ):
+                        continue
+
+                    if (
+                        melhor is None
+                        or peso.get(candidato.get("criticidade", "C"), 1)
+                        > peso.get(melhor.get("criticidade", "C"), 1)
+                        or (
+                            peso.get(candidato.get("criticidade", "C"), 1)
+                            == peso.get(melhor.get("criticidade", "C"), 1)
+                            and candidato["distancia"] < melhor["distancia"]
+                        )
+                    ):
+                        melhor = candidato
+
+        if unidade_operacional:
+            resultado.at[idx, "LOCAL_TIPO"] = "UNIDADE OPERACIONAL"
+            resultado.at[idx, "LOCAL_NOME"] = (
+                unidade_operacional.get("nome")
+                or "COMPESA / ETA / ETE"
+            )
+            resultado.at[idx, "DISTANCIA_LOCAL_M"] = float(
+                unidade_operacional["distancia"]
+            )
+            resultado.at[idx, "CRITICIDADE"] = "C"
+            resultado.at[idx, "DETALHE"] = (
+                f"Motor ligado e velocidade 0,0 km/h por {duracao:.1f} min; "
+                f"unidade operacional identificada no raio: "
+                f"{unidade_operacional.get('nome') or 'COMPESA/ETA/ETE'} "
+                f"({unidade_operacional['distancia']:.0f} m). "
+                "Não classificado como local de lazer/comércio."
+            )
+            continue
 
         if melhor:
+            criticidade = melhor.get("criticidade", "C")
 
-            criticidade = (
-                melhor[
-                    "criticidade"
-                ]
+            resultado.at[idx, "LOCAL_TIPO"] = melhor.get("categoria", "")
+            resultado.at[idx, "LOCAL_NOME"] = melhor.get("nome", "")
+            resultado.at[idx, "DISTANCIA_LOCAL_M"] = float(
+                melhor["distancia"]
             )
-
-            resultado.at[
-                idx,
-                "LOCAL_TIPO"
-            ] = melhor[
-                "categoria"
-            ]
-
-            resultado.at[
-                idx,
-                "LOCAL_NOME"
-            ] = melhor[
-                "nome"
-            ]
-
-            resultado.at[
-                idx,
-                "DISTANCIA_LOCAL_M"
-            ] = float(
-                melhor[
-                    "distancia"
-                ]
-            )
-
-            resultado.at[
-                idx,
-                "CRITICIDADE"
-            ] = criticidade
-
-            resultado.at[
-                idx,
-                "DETALHE"
-            ] = (
-                f"Motor ligado e velocidade "
-                f"0,0 km/h por {duracao:.1f} min; "
-                f"local próximo: "
-                f"{melhor['nome'] or 'sem nome'} "
-                f"({melhor['categoria']}), "
+            resultado.at[idx, "CRITICIDADE"] = criticidade
+            resultado.at[idx, "DETALHE"] = (
+                f"Motor ligado e velocidade 0,0 km/h por {duracao:.1f} min; "
+                f"local próximo: {melhor.get('nome') or 'sem nome'} "
+                f"({melhor.get('categoria', 'Outro')}), "
                 f"{melhor['distancia']:.0f} m."
             )
-
         else:
-
-            resultado.at[
-                idx,
-                "CRITICIDADE"
-            ] = "C"
-
-            resultado.at[
-                idx,
-                "DETALHE"
-            ] = (
-                f"Motor ligado e velocidade "
-                f"0,0 km/h por {duracao:.1f} min; "
-                f"nenhum estabelecimento "
-                f"classificado encontrado em "
+            resultado.at[idx, "CRITICIDADE"] = "C"
+            resultado.at[idx, "DETALHE"] = (
+                f"Motor ligado e velocidade 0,0 km/h por {duracao:.1f} min; "
+                f"nenhum estabelecimento classificado encontrado em "
                 f"{RAIO_BUSCA_POI_METROS} m."
             )
 
     return resultado
-
-
-# ============================================================
-# ANALISAR RELATÓRIOS SALVOS
-# ============================================================
-
 def analisar_relatorios_salvos(
     arquivos_html,
     inicio=None,
     fim=None
 ):
-
     dados = []
 
     for arquivo in arquivos_html:
-
-        df = ler_html_telemetria(
-            arquivo
-        )
-
+        df = ler_html_telemetria(arquivo)
         if not df.empty:
             dados.append(df)
 
     if not dados:
-
         return (
             pd.DataFrame(),
             pd.DataFrame(),
@@ -5026,53 +4532,60 @@ def analisar_relatorios_salvos(
         sort=False
     )
 
+    telemetria["DATA_HORA"] = pd.to_datetime(
+        telemetria["DATA_HORA"],
+        errors="coerce"
+    )
+
+    telemetria = telemetria[
+        telemetria["DATA_HORA"].notna()
+    ].copy()
+
+    # Período exato da base + janela 08:00–17:00.
+    if inicio is not None and fim is not None:
+        inicio_ts = pd.Timestamp(inicio)
+        fim_ts = pd.Timestamp(fim)
+
+        telemetria = telemetria[
+            (telemetria["DATA_HORA"] >= inicio_ts)
+            & (telemetria["DATA_HORA"] <= fim_ts)
+        ].copy()
+
+    telemetria = telemetria[
+        ((telemetria["DATA_HORA"].dt.hour * 60 + telemetria["DATA_HORA"].dt.minute) >= HORA_INICIO_OPERACIONAL * 60)
+        & ((telemetria["DATA_HORA"].dt.hour * 60 + telemetria["DATA_HORA"].dt.minute) <= HORA_FIM_OPERACIONAL * 60)
+    ].copy()
+
     telemetria = (
         telemetria
         .drop_duplicates()
-        .sort_values(
-            [
-                "PLACA",
-                "DATA_HORA"
-            ]
-        )
+        .sort_values(["PLACA", "DATA_HORA"])
         .reset_index(drop=True)
     )
 
+    if telemetria.empty:
+        return (
+            pd.DataFrame(),
+            pd.DataFrame(),
+            pd.DataFrame(),
+            pd.DataFrame()
+        )
+
     desvios = pd.DataFrame()
 
-    paradas = (
-        identificar_paradas_motor_ligado(
-            telemetria
-        )
-    )
+    paradas = identificar_paradas_motor_ligado(telemetria)
 
     if not paradas.empty:
+        paradas = validar_local_paradas(paradas)
 
-        paradas = validar_local_paradas(
-            paradas
-        )
-
-    if (
-        inicio is not None
-        and fim is not None
-    ):
-
-        abastecimento = (
-            carregar_fonte_abastecimento(
-                inicio,
-                fim
-            )
-        )
-
+    if inicio is not None and fim is not None:
+        abastecimento = carregar_fonte_abastecimento(inicio, fim)
     else:
-
         abastecimento = pd.DataFrame()
 
-    desvios_abast = (
-        cruzar_abastecimento_telemetria(
-            telemetria,
-            abastecimento
-        )
+    desvios_abast = cruzar_abastecimento_telemetria(
+        telemetria,
+        abastecimento
     )
 
     return (
@@ -5081,109 +4594,233 @@ def analisar_relatorios_salvos(
         paradas,
         desvios_abast
     )
+COLUNAS_SAIDA_PADRAO = [
+    "PLACA",
+    "DATA",
+    "MOTORISTA",
+    "ENDERECO",
+    "LOCAL ABASTECIMENTO",
+    "Distância (KM)",
+    "DATA TELEMETRIA",
+    "MOTORISTA TELEMETRIA",
+    "MOTORISTA TELEMETRIA/MATRÍCULA",
+    "ENDEREÇO TELEMETRIA",
+    "TIPO DE DESVIO",
+    "CRITICIDADE",
+    "DURAÇÃO_MINUTOS",
+    "DETALHES DA COMPARAÇÃO",
+    "CLASSIFICAÇÃO",
+    "DATA_EXECUCAO",
+    "PERIODO_FILTRADO",
+]
 
 
-# ============================================================
-# GERAR EXCEL DE AUDITORIA
-# ============================================================
+def _formatar_periodo_saida(inicio=None, fim=None):
+    if inicio is None or fim is None:
+        return ""
+    return (
+        f"{pd.Timestamp(inicio).strftime('%d/%m/%Y %H:%M')} "
+        f"até {pd.Timestamp(fim).strftime('%d/%m/%Y %H:%M')}"
+    )
+
+
+def padronizar_resultados_saida(
+    df,
+    inicio=None,
+    fim=None,
+    origem=""
+):
+    if df is None or df.empty:
+        return pd.DataFrame(columns=COLUNAS_SAIDA_PADRAO)
+
+    agora = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+    periodo = _formatar_periodo_saida(inicio, fim)
+
+    registros = []
+
+    for _, row in df.iterrows():
+        data = row.get("DATA_ABAST", row.get("INICIO", row.get("DATA_HORA_TELEMETRIA", "")))
+        data_t = row.get("DATA_HORA_TELEMETRIA", row.get("INICIO", data))
+
+        motorista = row.get(
+            "MOTORISTA_ABAST",
+            row.get("MOTORISTA", "")
+        )
+
+        endereco_abast = row.get("ENDERECO_ABAST", "")
+        endereco_t = row.get(
+            "ENDERECO_TELEMETRIA",
+            row.get("ENDERECO", "")
+        )
+
+        local_abast = row.get(
+            "POSTO_ABAST",
+            row.get("LOCAL ABASTECIMENTO", "")
+        )
+
+        # Para parada, o endereço da telemetria também ocupa o campo
+        # ENDERECO padrão; o campo de abastecimento permanece vazio.
+        tipo = row.get(
+            "TIPO_DESVIO",
+            row.get("TIPO DE DESVIO", "")
+        )
+
+        duracao = row.get(
+            "DURACAO_MINUTOS",
+            0
+        )
+
+        detalhe = row.get(
+            "DETALHE",
+            row.get("DETALHES DA COMPARAÇÃO", "")
+        )
+
+        classificacao = row.get(
+            "CLASSIFICAÇÃO",
+            ""
+        )
+
+        if origem == "Paradas_Motor_Ligado":
+            endereco_abast = ""
+            local_abast = ""
+            motorista = row.get("MOTORISTA", "")
+            data = row.get("INICIO", "")
+            data_t = row.get("INICIO", "")
+            endereco_t = row.get("ENDERECO", "")
+            classificacao = (
+                "UNIDADE OPERACIONAL"
+                if normalizar_texto(row.get("LOCAL_TIPO", "")) == "UNIDADE OPERACIONAL"
+                else (
+                    "LOCAL COMERCIAL/LAZER"
+                    if row.get("LOCAL_TIPO", "")
+                    else "PARADA MOTOR LIGADO"
+                )
+            )
+
+        registros.append({
+            "PLACA": row.get("PLACA", ""),
+            "DATA": data,
+            "MOTORISTA": motorista,
+            "ENDERECO": endereco_abast or (
+                row.get("ENDERECO", "") if origem == "Paradas_Motor_Ligado" else ""
+            ),
+            "LOCAL ABASTECIMENTO": local_abast,
+            "Distância (KM)": row.get(
+                "DISTANCIA_KM",
+                row.get("DISTÂNCIA (KM)", "")
+            ),
+            "DATA TELEMETRIA": data_t,
+            "MOTORISTA TELEMETRIA": row.get(
+                "Motoristas Telemetria",
+                row.get("MOTORISTA", "") if origem == "Paradas_Motor_Ligado" else ""
+            ),
+            "MOTORISTA TELEMETRIA/MATRÍCULA": row.get(
+                "MOTORISTA TELEMETRIA/MATRÍCULA",
+                ""
+            ),
+            "ENDEREÇO TELEMETRIA": endereco_t,
+            "TIPO DE DESVIO": tipo,
+            "CRITICIDADE": row.get("CRITICIDADE", ""),
+            "DURAÇÃO_MINUTOS": duracao,
+            "DETALHES DA COMPARAÇÃO": detalhe,
+            "CLASSIFICAÇÃO": classificacao,
+            "DATA_EXECUCAO": agora,
+            "PERIODO_FILTRADO": periodo,
+        })
+
+    return pd.DataFrame(registros, columns=COLUNAS_SAIDA_PADRAO)
+
 
 def gerar_excel_auditoria(
     telemetria,
     desvios,
     paradas,
-    desvios_abast=None
+    desvios_abast=None,
+    inicio=None,
+    fim=None
 ):
-
     if desvios_abast is None:
         desvios_abast = pd.DataFrame()
 
-    if not desvios_abast.empty:
+    saida_desvios = padronizar_resultados_saida(
+        desvios,
+        inicio,
+        fim,
+        "Desvios"
+    )
 
-        desvios = pd.concat(
-            [
-                desvios,
-                desvios_abast
-            ],
+    saida_abast = padronizar_resultados_saida(
+        desvios_abast,
+        inicio,
+        fim,
+        "Abastecimento_x_Telemetria"
+    )
+
+    saida_paradas = padronizar_resultados_saida(
+        paradas,
+        inicio,
+        fim,
+        "Paradas_Motor_Ligado"
+    )
+
+    partes = [
+        x for x in [saida_desvios, saida_abast, saida_paradas]
+        if not x.empty
+    ]
+
+    if partes:
+        geral = pd.concat(
+            partes,
             ignore_index=True,
             sort=False
-        )
+        ).drop_duplicates().reset_index(drop=True)
+    else:
+        geral = pd.DataFrame(columns=COLUNAS_SAIDA_PADRAO)
 
     resumo = []
-
-    if not desvios.empty:
-
-        for tipo, qtd in (
-            desvios[
-                "TIPO_DESVIO"
-            ].value_counts().items()
-        ):
-
-            resumo.append(
-                {
-                    "CATEGORIA":
-                        tipo,
-
-                    "QUANTIDADE":
-                        int(qtd),
-                }
-            )
-
-    if not paradas.empty:
-
-        for tipo, qtd in (
-            paradas[
-                "CRITICIDADE"
-            ].value_counts().items()
-        ):
-
-            resumo.append(
-                {
-                    "CATEGORIA":
-                        f"PARADA - {tipo}",
-
-                    "QUANTIDADE":
-                        int(qtd),
-                }
-            )
+    if not geral.empty:
+        for tipo, qtd in geral["TIPO DE DESVIO"].value_counts().items():
+            resumo.append({
+                "CATEGORIA": tipo,
+                "QUANTIDADE": int(qtd),
+            })
 
     df_resumo = pd.DataFrame(
         resumo,
-        columns=[
-            "CATEGORIA",
-            "QUANTIDADE"
-        ]
+        columns=["CATEGORIA", "QUANTIDADE"]
     )
 
     with pd.ExcelWriter(
         ARQUIVO_AUDITORIA,
         engine="openpyxl"
     ) as writer:
-
         telemetria.to_excel(
             writer,
             sheet_name="Telemetria",
             index=False
         )
 
-        desvios.to_excel(
+        geral.to_excel(
+            writer,
+            sheet_name="Geral",
+            index=False
+        )
+
+        saida_desvios.to_excel(
             writer,
             sheet_name="Desvios",
             index=False
         )
 
-        if not desvios_abast.empty:
-
-            desvios_abast.to_excel(
-                writer,
-                sheet_name=
-                    "Abastecimento_x_Telemetria",
-                index=False
-            )
-
-        paradas.to_excel(
+        saida_abast.to_excel(
             writer,
-            sheet_name=
-                "Paradas_Motor_Ligado",
+            sheet_name="Abastecimento_x_Telemetria",
+            index=False
+        )
+
+        saida_paradas.to_excel(
+            writer,
+            sheet_name="Paradas_Motor_Ligado",
             index=False
         )
 
@@ -5193,66 +4830,38 @@ def gerar_excel_auditoria(
             index=False
         )
 
-    wb = load_workbook(
-        ARQUIVO_AUDITORIA
-    )
+    wb = load_workbook(ARQUIVO_AUDITORIA)
 
     for ws in wb.worksheets:
-
         ws.freeze_panes = "A2"
 
         if ws.max_row >= 1:
-
-            ws.auto_filter.ref = (
-                ws.dimensions
-            )
+            ws.auto_filter.ref = ws.dimensions
 
         for cell in ws[1]:
-
-            cell.font = Font(
-                bold=True
-            )
-
+            cell.font = Font(bold=True)
             cell.alignment = Alignment(
                 horizontal="center",
-                vertical="center"
+                vertical="center",
+                wrap_text=True
             )
 
         for col in ws.columns:
-
             maior = max(
                 10,
                 max(
-                    len(
-                        str(
-                            c.value
-                            or ""
-                        )
-                    )
+                    len(str(c.value or ""))
                     for c in col
                 ) + 2
             )
 
             ws.column_dimensions[
-                get_column_letter(
-                    col[0].column
-                )
-            ].width = min(
-                maior,
-                60
-            )
+                get_column_letter(col[0].column)
+            ].width = min(maior, 60)
 
-    wb.save(
-        ARQUIVO_AUDITORIA
-    )
+    wb.save(ARQUIVO_AUDITORIA)
 
     return ARQUIVO_AUDITORIA
-
-
-# ============================================================
-# EXECUTAR AUDITORIA
-# ============================================================
-
 def executar_auditoria(
     arquivos_html,
     inicio,
@@ -5330,7 +4939,9 @@ def executar_auditoria(
         telemetria,
         desvios,
         paradas,
-        desvios_abast
+        desvios_abast,
+        inicio,
+        fim
     )
 
     print(
@@ -6566,35 +6177,29 @@ def enviar_resultados_google_sheets(df):
 # ============================================================
 
 def gerar_unificado_desvios():
+    print("\n" + "=" * 70)
+    print("GERANDO UNIFICADO DE DESVIOS")
+    print("=" * 70)
 
-    print(
-        "\n" + "=" * 70
-    )
+    if not ARQUIVO_AUDITORIA.exists():
+        print("⚠ Auditoria ainda não existe.")
+        return None
 
-    print(
-        "GERANDO UNIFICADO DE DESVIOS"
-    )
+    try:
+        xls = pd.ExcelFile(ARQUIVO_AUDITORIA)
 
-    print(
-        "=" * 70
-    )
-
-    todos = []
-
-    if ARQUIVO_AUDITORIA.exists():
-
-        try:
-
-            xls = pd.ExcelFile(
-                ARQUIVO_AUDITORIA
+        if "Geral" in xls.sheet_names:
+            final = pd.read_excel(
+                ARQUIVO_AUDITORIA,
+                sheet_name="Geral"
             )
-
+        else:
+            partes = []
             for aba in [
                 "Desvios",
                 "Abastecimento_x_Telemetria",
                 "Paradas_Motor_Ligado",
             ]:
-
                 if aba not in xls.sheet_names:
                     continue
 
@@ -6604,77 +6209,48 @@ def gerar_unificado_desvios():
                 )
 
                 if not df.empty:
+                    partes.append(df)
 
-                    df[
-                        "ABA_ORIGEM"
-                    ] = aba
-
-                    todos.append(
-                        df
-                    )
-
-        except Exception as erro:
-
-            print(
-                f"⚠ Erro lendo auditoria: "
-                f"{erro}"
+            final = (
+                pd.concat(
+                    partes,
+                    ignore_index=True,
+                    sort=False
+                )
+                if partes
+                else pd.DataFrame(columns=COLUNAS_SAIDA_PADRAO)
             )
 
-    if todos:
+    except Exception as erro:
+        print(f"⚠ Erro lendo auditoria: {erro}")
+        return None
 
-        final = (
-            pd.concat(
-                todos,
-                ignore_index=True,
-                sort=False
-            )
-            .drop_duplicates()
-            .reset_index(drop=True)
-        )
+    for coluna in COLUNAS_SAIDA_PADRAO:
+        if coluna not in final.columns:
+            final[coluna] = ""
 
-    else:
-
-        final = pd.DataFrame(
-            columns=[
-                "PLACA",
-                "DATA_HORA",
-                "TIPO_DESVIO",
-                "CRITICIDADE",
-                "DETALHE",
-                "ABA_ORIGEM",
-            ]
-        )
+    final = final[COLUNAS_SAIDA_PADRAO].drop_duplicates().reset_index(drop=True)
 
     with pd.ExcelWriter(
         ARQUIVO_UNIFICADO,
         engine="openpyxl"
     ) as writer:
-
         final.to_excel(
             writer,
-            sheet_name="Desvios",
+            sheet_name="Geral",
             index=False
         )
 
     formatar_excel(
         ARQUIVO_UNIFICADO,
-        "Desvios"
+        "Geral"
     )
 
     print(
         f"✓ UNIFICADO GERADO: "
         f"{ARQUIVO_UNIFICADO.resolve()}"
     )
-
-    print(
-        f"✓ Registros: "
-        f"{len(final)}"
-    )
-
-    # ========================================================
-    # GOOGLE SHEETS
-    # Envia exatamente o mesmo DataFrame usado no Excel.
-    # ========================================================
+    print(f"✓ Registros: {len(final)}")
 
     enviado = enviar_resultados_google_sheets(final)
 
@@ -6685,234 +6261,245 @@ def gerar_unificado_desvios():
 
     return ARQUIVO_UNIFICADO
 
-
 # ============================================================
-# MAIN
+# PROCESSAMENTO PARALELO / RESILIENTE
 # ============================================================
 
-def main():
+def encontrar_html_existente(placa, inicio, fim):
+    placa = normalizar_placa(placa)
+    inicio_date = normalizar_data(inicio)
+    fim_date = normalizar_data(fim)
 
-    print()
+    if not PASTA_HTML.exists():
+        return None
 
-    print(
-        "=" * 70
-    )
+    candidatos = []
 
-    print(
-        "AUTOVISION → AUDITORIA DE TELEMETRIA"
-    )
+    for arquivo in PASTA_HTML.rglob("*"):
+        if not arquivo.is_file() or arquivo.suffix.lower() not in {".html", ".htm"}:
+            continue
 
-    print(
-        "=" * 70
-    )
+        if normalizar_placa(arquivo.stem.split("_")[0]) != placa:
+            continue
 
-    # ========================================================
-    # VALIDAR PLACAS
-    # ========================================================
+        data = obter_data_arquivo(arquivo)
 
-    global PLACAS
+        if data is None or (
+            inicio_date is not None
+            and fim_date is not None
+            and inicio_date <= data <= fim_date
+        ):
+            candidatos.append(arquivo)
 
-    PLACAS = carregar_placas_telemetria_ociosidade()
+    if not candidatos:
+        return None
+
+    return max(candidatos, key=lambda x: x.stat().st_mtime)
 
 
-    
-    # ========================================================
-    # PERÍODO
-    # ========================================================
+def _worker_placas(worker_id, placas_worker, inicio, fim):
+    pasta_worker = PASTA_HTML / f"worker_{worker_id}"
+    pasta_worker.mkdir(parents=True, exist_ok=True)
 
-    inicio, fim = obter_periodo()
-
-    driver = criar_driver()
+    driver = None
 
     try:
+        driver = criar_driver(download_dir=pasta_worker)
+        fazer_login(driver)
 
-        # ====================================================
-        # AUTOVISION
-        # ====================================================
-
-        fazer_login(
-            driver
+        return processar_placas(
+            driver,
+            inicio,
+            fim,
+            placas=placas_worker,
+            pasta_html=pasta_worker
         )
 
-        arquivos_html = (
-            processar_placas(
-                driver,
-                inicio,
-                fim
-            )
-        )
+    finally:
+        if driver is not None:
+            try:
+                driver.quit()
+            except Exception:
+                pass
 
-        print()
 
-        print(
-            "=" * 70
-        )
+def processar_placas_paralelo(inicio, fim):
+    """
+    Divide as placas entre navegadores independentes.
+    HTMLs já existentes no período são reaproveitados.
+    Uma falha de uma placa não interrompe o restante.
+    """
+    from concurrent.futures import ThreadPoolExecutor, as_completed
 
-        print(
-            "RESULTADO AUTOVISION"
-        )
+    pendentes = []
+    reaproveitados = []
 
-        print(
-            "=" * 70
-        )
-
-        print(
-            f"Placas configuradas: "
-            f"{len(PLACAS)}"
-        )
-
-        print(
-            f"HTMLs baixados: "
-            f"{len(arquivos_html)}"
-        )
-
-        if not arquivos_html:
-
-            arquivos_html = (
-                listar_htmls_periodo(
-                    inicio,
-                    fim
-                )
-            )
-
-        if not arquivos_html:
-
-            print(
-                "❌ Nenhum HTML foi baixado "
-                "ou encontrado na pasta."
-            )
-
-            return
-
-        # ====================================================
-        # AUDITORIA LOCAL
-        # ====================================================
-
-        arquivos_para_analise = list(
-            arquivos_html
-        )
-
-        existentes = (
-            listar_htmls_periodo(
-                inicio,
-                fim
-            )
-        )
-
-        nomes = {
-            a.name
-            for a in arquivos_para_analise
-        }
-
-        for arquivo in existentes:
-
-            if arquivo.name not in nomes:
-
-                arquivos_para_analise.append(
-                    arquivo
-                )
-
-        executar_auditoria(
-            arquivos_para_analise,
+    for placa in PLACAS:
+        existente = encontrar_html_existente(
+            placa,
             inicio,
             fim
         )
 
-        # Gera o Excel e envia o MESMO DataFrame para RESULTADOS.
-        gerar_unificado_desvios()
+        if existente:
+            print(
+                f"✓ HTML já existente para {placa}: "
+                f"{existente.name}"
+            )
+            reaproveitados.append(existente)
+        else:
+            pendentes.append(placa)
 
-        # ====================================================
-        # FINAL
-        # ====================================================
+    print()
+    print("=" * 70)
+    print("PROCESSAMENTO ROBUSTO DE PLACAS")
+    print("=" * 70)
+    print(f"Total de placas: {len(PLACAS)}")
+    print(f"HTMLs reaproveitados: {len(reaproveitados)}")
+    print(f"Placas pendentes: {len(pendentes)}")
+    print(f"Workers simultâneos: {NUM_WORKERS}")
+
+    if not pendentes:
+        return reaproveitados
+
+    workers = max(1, min(NUM_WORKERS, len(pendentes)))
+
+    blocos = [[] for _ in range(workers)]
+
+    for indice, placa in enumerate(pendentes):
+        blocos[indice % workers].append(placa)
+
+    arquivos = list(reaproveitados)
+
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        futuros = {
+            executor.submit(
+                _worker_placas,
+                indice + 1,
+                bloco,
+                inicio,
+                fim
+            ): indice + 1
+            for indice, bloco in enumerate(blocos)
+            if bloco
+        }
+
+        for futuro in as_completed(futuros):
+            worker_id = futuros[futuro]
+
+            try:
+                resultado = futuro.result()
+                arquivos.extend(resultado)
+
+                print(
+                    f"✓ Worker {worker_id} finalizado: "
+                    f"{len(resultado)} HTML(s)"
+                )
+
+            except Exception as erro:
+                print(
+                    f"❌ Worker {worker_id} falhou: {erro}"
+                )
+
+    unicos = {}
+    for arquivo in arquivos:
+        unicos[str(arquivo.resolve())] = arquivo
+
+    arquivos = list(unicos.values())
+
+    print(
+        f"✓ HTMLs disponíveis para análise: {len(arquivos)}"
+    )
+
+    return arquivos
+
+
+def main():
+    print()
+    print("=" * 70)
+    print("AUTOVISION → AUDITORIA DE TELEMETRIA")
+    print("=" * 70)
+
+    global PLACAS
+
+    try:
+        # As placas deste teste vêm exclusivamente da matriz acima.
+        PLACAS = list(MATRIZ_PLACAS)
+
+        if not PLACAS:
+            raise RuntimeError(
+                "A MATRIZ_PLACAS está vazia. Informe pelo menos uma placa para o teste."
+            )
 
         print()
+        print("PLACAS RECEBIDAS DA MATRIZ:")
+        for indice, placa in enumerate(PLACAS, start=1):
+            print(f"{indice}. {placa}")
 
-        print(
-            "=" * 70
+        inicio, fim = obter_periodo()
+
+        # Processamento paralelo, com reaproveitamento dos HTMLs.
+        arquivos_html = processar_placas_paralelo(
+            inicio,
+            fim
         )
 
-        print(
-            "✅ PROCESSO FINALIZADO"
+        print()
+        print("=" * 70)
+        print("RESULTADO AUTOVISION")
+        print("=" * 70)
+        print(f"Placas configuradas: {len(PLACAS)}")
+        print(f"HTMLs disponíveis: {len(arquivos_html)}")
+
+        if not arquivos_html:
+            arquivos_html = listar_htmls_periodo(
+                inicio,
+                fim
+            )
+
+        if not arquivos_html:
+            print("❌ Nenhum HTML foi baixado ou encontrado na pasta.")
+            return
+
+        # ========================================================
+        # AUDITORIA LOCAL
+        # ========================================================
+
+        executar_auditoria(
+            arquivos_html,
+            inicio,
+            fim
         )
 
-        print(
-            "=" * 70
-        )
+        # Gera o mesmo conjunto padronizado no Excel e no Sheets.
+        gerar_unificado_desvios()
 
+        print()
+        print("=" * 70)
+        print("✅ PROCESSO FINALIZADO")
+        print("=" * 70)
+        print(f"HTMLs: {PASTA_HTML.resolve()}")
+        print(f"Auditoria: {ARQUIVO_AUDITORIA.resolve()}")
+        print(f"Unificado: {ARQUIVO_UNIFICADO.resolve()}")
         print(
-            f"HTMLs: "
-            f"{PASTA_HTML.resolve()}"
+            f"Período: {inicio.strftime('%d/%m/%Y %H:%M')} "
+            f"até {fim.strftime('%d/%m/%Y %H:%M')}"
         )
-
         print(
-            f"Auditoria: "
-            f"{ARQUIVO_AUDITORIA.resolve()}"
-        )
-
-        print(
-            f"Unificado: "
-            f"{ARQUIVO_UNIFICADO.resolve()}"
+            f"Janela operacional: "
+            f"{HORA_INICIO_OPERACIONAL:02d}:00–"
+            f"{HORA_FIM_OPERACIONAL:02d}:00"
         )
 
     except KeyboardInterrupt:
-
-        print(
-            "\nProcesso interrompido."
-        )
+        print("\nProcesso interrompido.")
 
     except Exception as erro:
-
         print()
-
-        print(
-            "=" * 70
-        )
-
-        print(
-            "❌ ERRO GERAL"
-        )
-
-        print(
-            "=" * 70
-        )
-
-        print(
-            erro
-        )
+        print("=" * 70)
+        print("❌ ERRO GERAL")
+        print("=" * 70)
+        print(erro)
 
         import traceback
-
         traceback.print_exc()
-
-    finally:
-
-        try:
-
-            driver.quit()
-
-        except Exception:
-
-            pass
-
-
-# ============================================================
-# EXECUTAR
-# ============================================================
-
-if __name__ == "__main__":
-
-    main()
-
-
-
-
-
-
-
-
-
-
-
-
-
-
