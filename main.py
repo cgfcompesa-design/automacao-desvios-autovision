@@ -489,12 +489,12 @@ INTERVALO_ENTRE_ANALISES = 2.0
 
 USUARIO = os.environ.get(
     "AUTOVISION_USUARIO",
-    "nayarasilva"
+    ""
 )
 
 SENHA = os.environ.get(
     "AUTOVISION_SENHA",
-    "20005"
+    ""
 )
 
 
