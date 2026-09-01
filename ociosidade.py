@@ -63,12 +63,12 @@ ID_TABELA_RELATORIO = (
 
 USUARIO = os.environ.get(
     "AUTOVISION_USUARIO",
-    "nayarasilva"
+    ""
 )
 
 SENHA = os.environ.get(
     "AUTOVISION_SENHA",
-    "20005"
+    ""
 )
 
 
