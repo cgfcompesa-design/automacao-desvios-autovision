@@ -105,6 +105,8 @@ PAUSA_APOS_FALHA_PLACA = 7
 PAUSA_CADA_N_PLACAS = 20
 PAUSA_LOTE_GRANDE = 60
 TEMPO_AGUARDAR_MUNICIPIO = 140
+TEMPO_AGUARDAR_ENDERECOS = 180
+INTERVALO_VERIFICACAO_ENDERECOS = 2.0
 
 
 # ============================================================
@@ -242,6 +244,26 @@ TOLERANCIA_ABASTECIMENTO_MIN = 3
 
 TOLERANCIA_IGNICAO_ABASTECIMENTO_MIN = 3
 
+# ============================================================
+# REGRAS DE HORÁRIO / PADRONIZAÇÃO
+# ============================================================
+
+HORA_INICIO_ANALISE = 8
+HORA_FIM_ANALISE = 18
+
+COLUNAS_PADRAO_DESVIOS = [
+    "PLACA", "DATA", "MOTORISTA", "MOTORISTA TELEMETRIA",
+    "ENDEREÇO", "LOCAL ABASTECIMENTO", "DISTÂNCIA (KM)",
+    "DATA TELEMETRIA", "ENDEREÇO TELEMETRIA", "TIPO DE DESVIO",
+    "CRITICIDADE", "DETALHES DA COMPARAÇÃO", "CLASSIFICAÇÃO",
+    "OBSERVAÇÕES", "DATA ENVIO", "DATA RETORNO",
+    "DURAÇÃO (MINUTOS)", "MUNICÍPIO ABASTECIMENTO",
+    "MUNICÍPIO TELEMETRIA", "BAIRRO ABASTECIMENTO",
+    "LATITUDE ABASTECIMENTO", "LONGITUDE ABASTECIMENTO",
+    "LATITUDE TELEMETRIA", "LONGITUDE TELEMETRIA",
+    "MÉTODO VERIFICAÇÃO ENDEREÇO", "DISTÂNCIA ENDEREÇOS (M)",
+]
+
 
 
 
@@ -313,10 +335,8 @@ def nome_seguro(valor):
 # GOOGLE PLACES API - OPCIONAL / ÚLTIMO RECURSO
 # ============================================================
 
-GOOGLE_PLACES_API_KEY = os.environ.get(
-    "GOOGLE_PLACES_API_KEY",
-    "AIzaSyBtJmgG71Efuw_JEN8_-nQHps53K9c-RBY"
-)
+# Configure GOOGLE_PLACES_API_KEY via environment variable.
+GOOGLE_PLACES_API_KEY = os.environ.get("GOOGLE_PLACES_API_KEY", "")
 
 OVERPASS_URL = os.environ.get(
     "OVERPASS_URL",
@@ -2181,6 +2201,192 @@ def aguardar_municipio_carregado(driver, timeout=None):
 
 
 # ============================================================
+# AGUARDAR ENDEREÇOS TERMINAREM DE CARREGAR
+# ============================================================
+
+def aguardar_enderecos_carregados(driver, timeout=None):
+    """
+    Aguarda o AutoVision terminar de carregar os endereços da coluna
+    Endereço antes de permitir a exportação do HTML.
+
+    O AutoVision pode exibir o marcador ``⌛`` enquanto parte dos
+    endereços ainda está sendo carregada. Enquanto houver ``⌛`` na
+    coluna Endereço, a função mantém o relatório aberto e não permite
+    que o HTML seja exportado.
+
+    Se a coluna Endereço não existir, a função não bloqueia o fluxo,
+    pois alguns relatórios podem não apresentar essa coluna.
+    Se a coluna existir e ainda houver endereços pendentes até o
+    timeout, uma TimeoutException é levantada para evitar salvar um
+    HTML incompleto.
+    """
+    if timeout is None:
+        timeout = TEMPO_AGUARDAR_ENDERECOS
+
+    limite = time.time() + timeout
+    ultimo_status = None
+
+    while time.time() < limite:
+        try:
+            resultado = driver.execute_script(
+                """
+                const normaliza = s => (s || '').trim();
+                const tabelas = [...document.querySelectorAll('table')];
+
+                for (const tabela of tabelas) {
+                    const headers = [...tabela.querySelectorAll('th, thead td')];
+                    const indice = headers.findIndex(h => {
+                        const t = normaliza(h.innerText || h.textContent)
+                            .normalize('NFD')
+                            .replace(/[\\u0300-\\u036f]/g, '')
+                            .toUpperCase();
+                        return t === 'ENDERECO' || t.includes('ENDERECO');
+                    });
+
+                    if (indice < 0) continue;
+
+                    const linhas = [...tabela.querySelectorAll('tbody tr')];
+                    if (!linhas.length) {
+                        return {
+                            encontrou: true,
+                            pronto: false,
+                            pendentes: 0,
+                            carregados: 0,
+                            total: 0
+                        };
+                    }
+
+                    let pendentes = 0;
+                    let carregados = 0;
+                    let vazios = 0;
+
+                    for (const linha of linhas) {
+                        const celulas = linha.querySelectorAll('td');
+                        if (!celulas[indice]) continue;
+
+                        const celula = celulas[indice];
+                        const texto = normaliza(celula.innerText || celula.textContent);
+                        const temMarcador = texto.includes('⌛');
+                        const temImagem = !!celula.querySelector('img, svg, i.icon, .fa, .glyphicon');
+                        const apenasEmoji = texto &&
+                            /^[\\p{Extended_Pictographic}\\p{Emoji_Presentation}\\s]+$/u.test(texto);
+
+                        if (!texto || temMarcador || temImagem || apenasEmoji) {
+                            pendentes++;
+                            if (!texto) vazios++;
+                        } else {
+                            carregados++;
+                        }
+                    }
+
+                    return {
+                        encontrou: true,
+                        pronto: pendentes === 0 && carregados > 0,
+                        pendentes,
+                        carregados,
+                        vazios,
+                        total: linhas.length
+                    };
+                }
+
+                return {
+                    encontrou: false,
+                    pronto: true,
+                    pendentes: 0,
+                    carregados: 0,
+                    total: 0
+                };
+                """
+            )
+
+            if not resultado.get('encontrou'):
+                print('✓ Coluna Endereço não encontrada; exportação liberada.')
+                return True
+
+            if resultado.get('pronto'):
+                print(
+                    '✓ Endereços carregados: '
+                    f"{resultado.get('carregados', 0)} de "
+                    f"{resultado.get('total', 0)} registro(s)."
+                )
+                return True
+
+            status = (
+                resultado.get('pendentes', 0),
+                resultado.get('carregados', 0),
+                resultado.get('vazios', 0),
+                resultado.get('total', 0),
+            )
+
+            if status != ultimo_status:
+                print(
+                    '⌛ Aguardando AutoVision carregar Endereço... '
+                    f"pendentes={status[0]} | "
+                    f"carregados={status[1]} | "
+                    f"vazios={status[2]} | "
+                    f"total={status[3]}"
+                )
+                ultimo_status = status
+
+        except (StaleElementReferenceException, WebDriverException):
+            pass
+        except Exception as erro:
+            print(f'⚠ Não foi possível verificar os endereços: {erro}')
+
+        time.sleep(INTERVALO_VERIFICACAO_ENDERECOS)
+
+    print()
+    print('!' * 70)
+    print('❌ ENDEREÇOS NÃO TERMINARAM DE CARREGAR')
+    print('!' * 70)
+    print(
+        f'⚠ O AutoVision ainda apresenta endereços com ⌛ após '
+        f'{timeout} segundos.'
+    )
+    print('⚠ HTML NÃO será exportado para evitar dados incompletos.')
+
+    raise TimeoutException(
+        'Endereços da telemetria não terminaram de carregar no AutoVision. '
+        'O HTML não foi exportado para evitar dados incompletos.'
+    )
+
+
+# ============================================================
+# VALIDAR HTML BAIXADO CONTRA MARCADOR ⌛
+# ============================================================
+
+def html_tem_endereco_pendente(arquivo):
+    """Retorna True quando o HTML exportado ainda contém o marcador ⌛."""
+    try:
+        texto = Path(arquivo).read_text(encoding='utf-8', errors='ignore')
+        return '⌛' in texto
+    except Exception:
+        try:
+            conteudo = Path(arquivo).read_bytes()
+            return '⌛'.encode('utf-8') in conteudo
+        except Exception:
+            return False
+
+
+def aguardar_html_sem_marcador(arquivo, timeout=None):
+    """
+    Confirma que o HTML baixado não contém ⌛. Se ainda contiver,
+    aguarda o DOM do relatório atualizar antes de nova exportação.
+    """
+    if timeout is None:
+        timeout = TEMPO_AGUARDAR_ENDERECOS
+
+    if not html_tem_endereco_pendente(arquivo):
+        return True
+
+    print(
+        f'⚠ HTML {Path(arquivo).name} contém ⌛. '
+        'Aguardando nova exportação.'
+    )
+    return False
+
+
+# ============================================================
 # LOCALIZAR ÍCONE HTML
 # ============================================================
 
@@ -2598,6 +2804,11 @@ def processar_placa(
         # Espera o carregamento assíncrono do Município antes de exportar.
         aguardar_municipio_carregado(driver)
 
+        # IMPORTANTE: o AutoVision pode manter ⌛ na coluna Endereço
+        # enquanto os endereços ainda estão sendo carregados.
+        # Só permite o clique de exportação quando todos estiverem prontos.
+        aguardar_enderecos_carregados(driver)
+
         arquivos_antes = listar_htmls()
 
         clicar_icone_html(
@@ -2618,6 +2829,23 @@ def processar_placa(
 
             raise TimeoutException(
                 "HTML não foi baixado."
+            )
+
+        # Validação adicional: mesmo após o DOM indicar que terminou,
+        # não aceitamos um arquivo exportado que ainda contenha ⌛.
+        # Nesse caso o HTML é descartado e a placa será tratada pela
+        # rotina de tentativa do lote, evitando contaminar a auditoria.
+        if html_tem_endereco_pendente(arquivo):
+            print(
+                f"❌ HTML {arquivo.name} ainda contém ⌛. "
+                "Exportação considerada incompleta."
+            )
+            try:
+                arquivo.unlink()
+            except Exception:
+                pass
+            raise TimeoutException(
+                "O HTML exportado ainda contém ⌛ na coluna Endereço."
             )
 
         arquivo_final = (
@@ -2914,42 +3142,29 @@ def converter_float(valor):
 
 
 def limpar_motorista(valor):
+    """Normaliza nomes e remove códigos/prefixos de motorista."""
+    if valor is None:
+        return ""
+    try:
+        if pd.isna(valor):
+            return ""
+    except Exception:
+        pass
 
     texto = normalizar_texto(valor)
-
-    texto = re.sub(
-        r"[^A-Z0-9 ]",
-        " ",
-        texto
-    )
-
-    texto = re.sub(
-        r"\s+",
-        " ",
-        texto
-    ).strip()
-
-    invalidos = {
-        "",
-        "-",
-        "--",
-        "N A",
-        "NA",
-        "N/A",
-        "NULL",
-        "NONE",
-        "SEM",
-        "SEM MOTORISTA",
-        "SEMMOTORISTA",
-        "0",
-    }
-
-    if (
-        texto in invalidos
-        or len(texto) <= 2
-    ):
+    if texto in {"", "-", "--", "N A", "NA", "N/A", "NULL", "NONE",
+                 "NAN", "SEM", "SEM MOTORISTA", "SEMMOTORISTA", "0"}:
         return ""
 
+    # Ex.: 472570 - FULANO SILVA -> FULANO SILVA
+    texto = re.sub(r"^\s*\d+(?:\s*[-–—:/]\s*|\s+)+", "", texto)
+    texto = re.sub(r"^\s*[A-Z]?\d{4,}\s*[-–—:/]\s*", "", texto)
+    texto = re.sub(r"[^A-Z0-9 ]", " ", texto)
+    texto = re.sub(r"\s+", " ", texto).strip()
+
+    if texto in {"", "N A", "NA", "NAN", "NULL", "NONE",
+                 "SEM MOTORISTA", "SEMMOTORISTA", "0"}:
+        return ""
     return texto
 
 
@@ -2989,6 +3204,38 @@ def enderecos_compativeis(a, b):
         a in b
         or b in a
     )
+
+
+
+def dentro_horario_analise(valor):
+    """Somente registros de 08:00 até 18:00, inclusive."""
+    try:
+        ts = pd.to_datetime(valor, dayfirst=True, errors="coerce")
+        if pd.isna(ts):
+            return False
+        h = ts.hour + ts.minute / 60 + ts.second / 3600
+        return HORA_INICIO_ANALISE <= h <= HORA_FIM_ANALISE
+    except Exception:
+        return False
+
+
+def aplicar_filtro_horario(df, coluna="DATA_HORA"):
+    if df.empty or coluna not in df.columns:
+        return df
+    resultado = df.copy()
+    resultado[coluna] = pd.to_datetime(
+        resultado[coluna], dayfirst=True, errors="coerce"
+    )
+    antes = len(resultado)
+    resultado = resultado[
+        resultado[coluna].notna()
+        & resultado[coluna].map(dentro_horario_analise)
+    ].copy()
+    print(
+        f"✓ Filtro horário {HORA_INICIO_ANALISE:02d}:00–"
+        f"{HORA_FIM_ANALISE:02d}:00: {len(resultado)}/{antes} registros."
+    )
+    return resultado
 
 
 def ler_html_telemetria(arquivo):
@@ -3708,466 +3955,292 @@ def geocodificar_endereco(
     return None
 
 
+
+# ============================================================
+# GOOGLE PLACES - TESTE/GEOCODIFICAÇÃO DE ENDEREÇO
+# ============================================================
+
+def consultar_google_places_endereco(endereco):
+    if not GOOGLE_PLACES_API_KEY or not endereco:
+        return None
+
+    url = "https://places.googleapis.com/v1/places:searchText"
+    headers = {
+        "Content-Type": "application/json",
+        "X-Goog-Api-Key": GOOGLE_PLACES_API_KEY,
+        "X-Goog-FieldMask": (
+            "places.displayName,places.formattedAddress,"
+            "places.location,places.id"
+        ),
+    }
+    payload = {
+        "textQuery": str(endereco),
+        "languageCode": "pt-BR",
+        "regionCode": "BR",
+        "pageSize": 1,
+    }
+
+    try:
+        resposta = requests.post(
+            url, headers=headers, json=payload, timeout=20
+        )
+        resposta.raise_for_status()
+        places = resposta.json().get("places", [])
+        if not places:
+            return None
+
+        item = places[0]
+        loc = item.get("location", {})
+        lat = converter_float(loc.get("latitude"))
+        lon = converter_float(loc.get("longitude"))
+        if not lat or not lon:
+            return None
+
+        return {
+            "lat": lat,
+            "lon": lon,
+            "nome": item.get("displayName", {}).get("text", ""),
+            "endereco": item.get("formattedAddress", ""),
+            "id": item.get("id", ""),
+        }
+    except Exception as erro:
+        print(f"⚠ Google Places Text Search indisponível: {erro}")
+        return None
+
+
+def testar_google_places_endereco(endereco):
+    """Executa um teste manual da API Google Places."""
+    resultado = consultar_google_places_endereco(endereco)
+    if resultado:
+        print("✓ GOOGLE PLACES TESTE OK")
+        print(json.dumps(resultado, ensure_ascii=False, indent=2))
+    else:
+        print("⚠ GOOGLE PLACES TESTE: nenhum resultado.")
+    return resultado
+
+
 # ============================================================
 # CRUZAMENTO ABASTECIMENTO X TELEMETRIA
 # ============================================================
 
-def cruzar_abastecimento_telemetria(
-    telemetria,
-    abastecimento
-):
+def municipio_compativel(municipio_telemetria, bairro_abast, cidade_abast, endereco_abast):
+    mun = normalizar_texto(municipio_telemetria)
+    if not mun:
+        return None
+    candidatos = [
+        normalizar_texto(cidade_abast),
+        normalizar_texto(bairro_abast),
+        normalizar_texto(endereco_abast),
+    ]
+    candidatos = [x for x in candidatos if x]
+    if not candidatos:
+        return None
+    return any(mun == c or mun in c or c in mun for c in candidatos)
 
-    if (
-        telemetria.empty
-        or abastecimento.empty
-    ):
+
+def verificar_divergencia_endereco(f, t):
+    """
+    Camadas:
+      1) coordenadas;
+      2) Google Places para completar coordenadas;
+      3) Nominatim/OSM;
+      4) município telemetria x cidade/bairro/endereço;
+      5) texto.
+    """
+    endereco_abast = str(f.get("ENDERECO_ABAST", "") or "").strip()
+    endereco_t = str(t.get("ENDERECO", "") or "").strip()
+    cidade_abast = str(f.get("CIDADE_ABAST", "") or "").strip()
+    bairro_abast = str(f.get("BAIRRO_ABAST", "") or "").strip()
+    municipio_t = str(t.get("MUNICIPIO", "") or "").strip()
+
+    latf = converter_float(f.get("LATITUDE_ABAST", 0))
+    lonf = converter_float(f.get("LONGITUDE_ABAST", 0))
+    latt = converter_float(t.get("LATITUDE", 0))
+    lont = converter_float(t.get("LONGITUDE", 0))
+    metodo = ""
+    distancia = None
+
+    if not (latf and lonf) and endereco_abast:
+        geo = consultar_google_places_endereco(endereco_abast)
+        if geo:
+            latf, lonf = geo["lat"], geo["lon"]
+            metodo = "GOOGLE PLACES - ABASTECIMENTO"
+
+    if not (latf and lonf) and endereco_abast:
+        geo = geocodificar_endereco(endereco_abast)
+        if geo:
+            latf, lonf = geo
+            metodo = "NOMINATIM - ABASTECIMENTO"
+
+    if not (latt and lont) and endereco_t:
+        geo = consultar_google_places_endereco(endereco_t)
+        if geo:
+            latt, lont = geo["lat"], geo["lon"]
+            metodo = metodo or "GOOGLE PLACES - TELEMETRIA"
+
+    if not (latt and lont) and endereco_t:
+        geo = geocodificar_endereco(endereco_t)
+        if geo:
+            latt, lont = geo
+            metodo = metodo or "NOMINATIM - TELEMETRIA"
+
+    mun_ok = municipio_compativel(
+        municipio_t, bairro_abast, cidade_abast, endereco_abast
+    )
+
+    if latf and lonf and latt and lont:
+        distancia = distancia_metros(latf, lonf, latt, lont)
+        return (
+            distancia > RAIO_DIVERGENCIA_ENDERECO_METROS,
+            round(distancia, 1),
+            metodo or "COORDENADAS",
+            latf, lonf, latt, lont, mun_ok
+        )
+
+    if mun_ok is False:
+        return True, None, "MUNICÍPIO x CIDADE/BAIRRO", latf, lonf, latt, lont, mun_ok
+    if mun_ok is True:
+        return False, None, "MUNICÍPIO x CIDADE/BAIRRO", latf, lonf, latt, lont, mun_ok
+
+    comp = enderecos_compativeis(endereco_abast, endereco_t)
+    return not comp, None, "COMPARAÇÃO TEXTUAL", latf, lonf, latt, lont, None
+
+
+# ============================================================
+# CRUZAMENTO ABASTECIMENTO X TELEMETRIA
+# ============================================================
+
+def cruzar_abastecimento_telemetria(telemetria, abastecimento):
+    if telemetria.empty or abastecimento.empty:
         return pd.DataFrame()
 
     eventos = []
 
     for _, fuelrow in abastecimento.iterrows():
-
-        f = extrair_dados_abastecimento(
-            fuelrow
-        )
-
+        f = extrair_dados_abastecimento(fuelrow)
         placa = f["PLACA"]
+        data_abast = pd.to_datetime(f["DATA_ABAST"], errors="coerce")
 
-        data_abast = pd.to_datetime(
-            f["DATA_ABAST"],
-            errors="coerce"
-        )
-
-        if (
-            not placa
-            or pd.isna(data_abast)
-        ):
+        if not placa or pd.isna(data_abast) or not dentro_horario_analise(data_abast):
             continue
 
-        candidatos = telemetria[
-            telemetria["PLACA"]
-            == placa
-        ].copy()
-
+        candidatos = telemetria[telemetria["PLACA"] == placa].copy()
         if candidatos.empty:
             continue
 
-        candidatos[
-            "DATA_HORA"
-        ] = pd.to_datetime(
-            candidatos["DATA_HORA"],
-            errors="coerce"
+        candidatos["DATA_HORA"] = pd.to_datetime(
+            candidatos["DATA_HORA"], errors="coerce"
         )
-
         candidatos = candidatos[
             candidatos["DATA_HORA"].notna()
+            & candidatos["DATA_HORA"].dt.date.eq(data_abast.date())
+            & candidatos["DATA_HORA"].map(dentro_horario_analise)
         ].copy()
-
-        candidatos = candidatos[
-            candidatos[
-                "DATA_HORA"
-            ].dt.date
-            == data_abast.date()
-        ].copy()
-
         if candidatos.empty:
             continue
 
-        candidatos[
-            "DIF_MIN"
-        ] = (
-            candidatos["DATA_HORA"]
-            - data_abast
+        candidatos["DIF_MIN"] = (
+            candidatos["DATA_HORA"] - data_abast
         ).abs().dt.total_seconds() / 60.0
-
         candidatos = candidatos[
-            candidatos["DIF_MIN"]
-            <= TOLERANCIA_ABASTECIMENTO_MIN
-        ].sort_values(
-            "DIF_MIN"
-        )
-
+            candidatos["DIF_MIN"] <= TOLERANCIA_ABASTECIMENTO_MIN
+        ].sort_values("DIF_MIN")
         if candidatos.empty:
             continue
 
         t = candidatos.iloc[0]
+        dif = float(t["DIF_MIN"])
+        motorista_abast = f["MOTORISTA_ABAST"]
+        motorista_t = str(t.get("MOTORISTA", "") or "").strip()
+        motorista_abast_norm = f["MOTORISTA_ABAST_NORMALIZADO"]
+        motorista_t_norm = limpar_motorista(motorista_t)
 
-        dif = float(
-            t["DIF_MIN"]
-        )
+        endereco_abast = f["ENDERECO_ABAST"]
+        endereco_t = str(t.get("ENDERECO", "") or "").strip()
 
-        motorista_abast = (
-            f["MOTORISTA_ABAST"]
-        )
-
-        motorista_t = str(
-            t.get(
-                "MOTORISTA",
-                ""
-            )
-            or ""
-        ).strip()
-
-        motorista_abast_norm = (
-            f[
-                "MOTORISTA_ABAST_NORMALIZADO"
-            ]
-        )
-
-        motorista_t_norm = (
-            limpar_motorista(
-                motorista_t
-            )
-        )
-
-        endereco_abast = (
-            f["ENDERECO_ABAST"]
-        )
-
-        endereco_t = str(
-            t.get(
-                "ENDERECO",
-                ""
-            )
-            or ""
-        ).strip()
+        (
+            endereco_div, distancia_end, metodo_end,
+            latf, lonf, latt, lont, municipio_ok
+        ) = verificar_divergencia_endereco(f, t)
 
         base = {
             **f,
-
-            "DATA_HORA_TELEMETRIA":
-                t["DATA_HORA"],
-
-            "DIF_MIN":
-                round(
-                    dif,
-                    2
-                ),
-
-            "Motorista abastecimento":
-                motorista_abast,
-
-            "Motoristas Telemetria":
-                motorista_t,
-
-            "ENDERECO_TELEMETRIA":
-                endereco_t,
+            "DATA_HORA_TELEMETRIA": t["DATA_HORA"],
+            "DIF_MIN": round(dif, 2),
+            "Motorista abastecimento": motorista_abast,
+            "Motoristas Telemetria": motorista_t,
+            "ENDERECO_TELEMETRIA": endereco_t,
+            "CIDADE_ABAST": f.get("CIDADE_ABAST", ""),
+            "BAIRRO_ABAST": f.get("BAIRRO_ABAST", ""),
+            "LATITUDE_ABAST": latf,
+            "LONGITUDE_ABAST": lonf,
+            "LATITUDE_TELEMETRIA": latt,
+            "LONGITUDE_TELEMETRIA": lont,
+            "DISTANCIA_ENDERECOS_M": distancia_end,
+            "METODO_VERIFICACAO_ENDERECO": metodo_end,
+            "MUNICIPIO_TELEMETRIA": t.get("MUNICIPIO", ""),
         }
 
-        # --------------------------------------------------------
-        # MOTORISTA NÃO IDENTIFICADO
-        # --------------------------------------------------------
-
+        # NAN/não informado na telemetria também entra na contabilização
+        # como MOTORISTA DIFERENTE.
         if not motorista_t_norm:
-
-            eventos.append(
-                {
-                    **base,
-
-                    "TIPO_DESVIO":
-                        "Motorista não identificado",
-
-                    "CRITICIDADE":
-                        "MEDIA",
-
-                    "DETALHE":
-                        (
-                            f"Motorista abastecimento: "
-                            f"{motorista_abast or 'NÃO INFORMADO'} | "
-                            f"Motoristas Telemetria: "
-                            f"NÃO INFORMADO | "
-                            f"Data/hora: "
-                            f"{data_abast.strftime('%d/%m/%Y %H:%M:%S')} | "
-                            f"Diferença: "
-                            f"{dif:.2f} min"
-                        ),
-                }
-            )
-
-        # --------------------------------------------------------
-        # MOTORISTA DIFERENTE
-        # --------------------------------------------------------
-
-        elif (
-            motorista_abast_norm
-            and motorista_t_norm
-            and motorista_abast_norm
-            != motorista_t_norm
-        ):
-
-            eventos.append(
-                {
-                    **base,
-
-                    "TIPO_DESVIO":
-                        "MOTORISTA DIFERENTE",
-
-                    "CRITICIDADE":
-                        "ALTA",
-
-                    "DETALHE":
-                        (
-                            f"Motorista abastecimento: "
-                            f"{motorista_abast} | "
-                            f"Motoristas Telemetria: "
-                            f"{motorista_t} | "
-                            f"Data/hora: "
-                            f"{data_abast.strftime('%d/%m/%Y %H:%M:%S')} | "
-                            f"Diferença: "
-                            f"{dif:.2f} min"
-                        ),
-                }
-            )
-
-        # --------------------------------------------------------
-        # ENDEREÇO DIVERGENTE
-        # --------------------------------------------------------
-
-        endereco_div = False
-        distancia_end = None
-
-        latf = f[
-            "LATITUDE_ABAST"
-        ]
-
-        lonf = f[
-            "LONGITUDE_ABAST"
-        ]
-
-        latt = converter_float(
-            t.get(
-                "LATITUDE",
-                0
-            )
-        )
-
-        lont = converter_float(
-            t.get(
-                "LONGITUDE",
-                0
-            )
-        )
-
-        if (
-            not (latf and lonf)
-            and endereco_abast
-        ):
-
-            geo = geocodificar_endereco(
-                endereco_abast
-            )
-
-            if geo:
-                latf, lonf = geo
-
-        if (
-            not (latt and lont)
-            and endereco_t
-        ):
-
-            geo = geocodificar_endereco(
-                endereco_t
-            )
-
-            if geo:
-                latt, lont = geo
-
-        if (
-            latf
-            and lonf
-            and latt
-            and lont
-        ):
-
-            distancia_end = (
-                distancia_metros(
-                    latf,
-                    lonf,
-                    latt,
-                    lont
-                )
-            )
-
-            endereco_div = (
-                distancia_end
-                > RAIO_DIVERGENCIA_ENDERECO_METROS
-            )
-
-        else:
-
-            endereco_div = not enderecos_compativeis(
-                endereco_abast,
-                endereco_t
-            )
+            eventos.append({
+                **base,
+                "TIPO_DESVIO": "MOTORISTA DIFERENTE",
+                "CRITICIDADE": "ALTA",
+                "DETALHE": (
+                    f"Motorista abastecimento: {motorista_abast or 'NÃO INFORMADO'} | "
+                    f"Motorista Telemetria: NÃO INFORMADO | "
+                    f"Data/hora: {data_abast.strftime('%d/%m/%Y %H:%M:%S')} | "
+                    f"Diferença: {dif:.2f} min."
+                ),
+            })
+        elif motorista_abast_norm != motorista_t_norm:
+            eventos.append({
+                **base,
+                "TIPO_DESVIO": "MOTORISTA DIFERENTE",
+                "CRITICIDADE": "ALTA",
+                "DETALHE": (
+                    f"Motorista abastecimento: {motorista_abast or 'NÃO INFORMADO'} | "
+                    f"Motorista Telemetria: {motorista_t} | "
+                    f"Comparação normalizada: {motorista_abast_norm} x "
+                    f"{motorista_t_norm} | Diferença: {dif:.2f} min."
+                ),
+            })
 
         if endereco_div:
-
             detalhe = (
-                f"Abastecimento: "
-                f"{endereco_abast or f['POSTO_ABAST'] or 'NÃO INFORMADO'} | "
-                f"Telemetria: "
-                f"{endereco_t or 'NÃO INFORMADO'} | "
-                f"Data/hora: "
-                f"{data_abast.strftime('%d/%m/%Y %H:%M:%S')} | "
-                f"Diferença: "
-                f"{dif:.2f} min"
+                f"Abastecimento: {endereco_abast or f['POSTO_ABAST'] or 'NÃO INFORMADO'} | "
+                f"Telemetria: {endereco_t or 'NÃO INFORMADO'} | "
+                f"Município telemetria: {t.get('MUNICIPIO', '') or 'NÃO INFORMADO'} | "
+                f"Cidade abastecimento: {f.get('CIDADE_ABAST', '') or 'NÃO INFORMADO'} | "
+                f"Método: {metodo_end or 'NÃO DETERMINADO'}"
             )
-
             if distancia_end is not None:
+                detalhe += f" | Distância: {distancia_end:.1f} m"
 
-                detalhe += (
-                    f" | Distância: "
-                    f"{distancia_end:.1f} m"
-                )
+            eventos.append({
+                **base,
+                "TIPO_DESVIO": "ENDEREÇO DIVERGENTE",
+                "CRITICIDADE": (
+                    "ALTA" if distancia_end is not None and distancia_end > 500
+                    else "MEDIA"
+                ),
+                "DETALHE": detalhe,
+            })
 
-            eventos.append(
-                {
-                    **base,
+        if dif <= TOLERANCIA_IGNICAO_ABASTECIMENTO_MIN and motor_ligado_parado(t):
+            eventos.append({
+                **base,
+                "TIPO_DESVIO": "MOTOR LIGADO NO ABASTECIMENTO",
+                "CRITICIDADE": "ALTA",
+                "DETALHE": (
+                    "IG = L e Vel (Km/h) = 0,0 no registro de telemetria "
+                    f"correspondente ao abastecimento. Diferença: {dif:.2f} min."
+                ),
+            })
 
-                    "TIPO_DESVIO":
-                        "ENDEREÇO DIVERGENTE",
-
-                    "CRITICIDADE":
-                        (
-                            "ALTA"
-                            if (
-                                distancia_end
-                                is not None
-                                and distancia_end > 500
-                            )
-                            else "MEDIA"
-                        ),
-
-                    "DISTANCIA_ENDERECOS_M":
-                        (
-                            round(
-                                distancia_end,
-                                1
-                            )
-                            if distancia_end
-                            is not None
-                            else None
-                        ),
-
-                    "DETALHE":
-                        detalhe,
-                }
-            )
-
-        # --------------------------------------------------------
-        # MOTOR LIGADO NO ABASTECIMENTO
-        # --------------------------------------------------------
-
-        if (
-            dif
-            <= TOLERANCIA_IGNICAO_ABASTECIMENTO_MIN
-            and motor_ligado_parado(t)
-        ):
-
-            eventos.append(
-                {
-                    **base,
-
-                    "TIPO_DESVIO":
-                        "MOTOR LIGADO NO ABASTECIMENTO",
-
-                    "CRITICIDADE":
-                        "ALTA",
-
-                    "DETALHE":
-                        (
-                            "IG = L e Vel (Km/h) = 0,0 "
-                            "no registro de telemetria "
-                            "correspondente ao abastecimento. "
-                            f"Diferença: {dif:.2f} min."
-                        ),
-                }
-            )
-
-    if not eventos:
-        return pd.DataFrame()
-
-    return pd.DataFrame(
-        eventos
-    )
-
-
-def identificar_desvios_local(
-    df
-):
-
-    """
-    Mantida por compatibilidade.
-
-    Os desvios de motorista/endereço/motor ligado
-    são gerados somente no cruzamento abastecimento
-    x telemetria.
-    """
-
-    return pd.DataFrame()
-
-
-def motor_ligado_parado(
-    row
-):
-
-    return (
-        normalizar_texto(
-            row["IG"]
-        ) == "L"
-        and
-        abs(
-            float(
-                row["VELOCIDADE"]
-            )
-        ) < 0.01
-    )
-
-
-def distancia_metros(
-    lat1,
-    lon1,
-    lat2,
-    lon2
-):
-
-    raio = 6371000.0
-
-    p1 = math.radians(
-        float(lat1)
-    )
-
-    p2 = math.radians(
-        float(lat2)
-    )
-
-    dp = math.radians(
-        float(lat2)
-        - float(lat1)
-    )
-
-    dl = math.radians(
-        float(lon2)
-        - float(lon1)
-    )
-
-    a = (
-        math.sin(dp / 2) ** 2
-        +
-        math.cos(p1)
-        * math.cos(p2)
-        * math.sin(dl / 2) ** 2
-    )
-
-    return (
-        raio
-        * 2
-        * math.atan2(
-            math.sqrt(a),
-            math.sqrt(1 - a)
-        )
-    )
-
+    return pd.DataFrame(eventos)
 
 # ============================================================
 # PARADAS COM MOTOR LIGADO
@@ -5046,6 +5119,8 @@ def analisar_relatorios_salvos(
         .reset_index(drop=True)
     )
 
+    telemetria = aplicar_filtro_horario(telemetria, "DATA_HORA")
+
     desvios = pd.DataFrame()
 
     paradas = (
@@ -5091,6 +5166,131 @@ def analisar_relatorios_salvos(
     )
 
 
+
+# ============================================================
+# PADRONIZAÇÃO DO RELATÓRIO DE DESVIOS
+# ============================================================
+
+def valor_seguro(valor):
+    try:
+        if valor is None or pd.isna(valor):
+            return ""
+    except Exception:
+        pass
+    return valor
+
+
+def padronizar_desvios(df, origem=""):
+    resultado = pd.DataFrame(index=df.index if isinstance(df, pd.DataFrame) else [])
+    for coluna in COLUNAS_PADRAO_DESVIOS:
+        resultado[coluna] = ""
+
+    if not isinstance(df, pd.DataFrame) or df.empty:
+        return resultado
+
+    def primeiro(*nomes):
+        for nome in nomes:
+            if nome in df.columns:
+                return df[nome].map(valor_seguro)
+        return pd.Series([""] * len(df), index=df.index)
+
+    resultado["PLACA"] = primeiro("PLACA")
+    resultado["DATA"] = primeiro("DATA_ABAST", "INICIO", "DATA_HORA")
+    resultado["MOTORISTA"] = primeiro(
+        "Motorista abastecimento", "MOTORISTA_ABAST", "MOTORISTA"
+    )
+    resultado["MOTORISTA TELEMETRIA"] = primeiro(
+        "Motoristas Telemetria", "MOTORISTA_TELEMETRIA", "MOTORISTA"
+    )
+    resultado["ENDEREÇO"] = primeiro(
+        "ENDERECO_ABAST", "ENDEREÇO", "ENDERECO"
+    )
+    resultado["LOCAL ABASTECIMENTO"] = primeiro(
+        "POSTO_ABAST", "LOCAL ABASTECIMENTO", "LOCAL_NOME"
+    )
+
+    distancia_m = primeiro(
+        "DISTANCIA_ENDERECOS_M",
+        "DISTANCIA_LOCAL_M",
+        "Distância (KM)",
+        "DISTANCIA (KM)"
+    )
+    distancia_num = pd.to_numeric(distancia_m, errors="coerce")
+    if any(
+        c in df.columns
+        for c in ["DISTANCIA_ENDERECOS_M", "DISTANCIA_LOCAL_M", "DISTÂNCIA ENDEREÇOS (M)"]
+    ):
+        resultado["DISTÂNCIA (KM)"] = distancia_num / 1000.0
+    else:
+        resultado["DISTÂNCIA (KM)"] = distancia_num
+
+    resultado["DATA TELEMETRIA"] = primeiro(
+        "DATA_HORA_TELEMETRIA", "INICIO", "DATA_HORA"
+    )
+    resultado["ENDEREÇO TELEMETRIA"] = primeiro(
+        "ENDERECO_TELEMETRIA", "ENDEREÇO TELEMETRIA", "ENDERECO"
+    )
+    resultado["TIPO DE DESVIO"] = primeiro(
+        "TIPO_DESVIO", "TIPO DE DESVIO"
+    )
+    resultado["CRITICIDADE"] = primeiro("CRITICIDADE")
+    resultado["DETALHES DA COMPARAÇÃO"] = primeiro(
+        "DETALHE", "DETALHES DA COMPARAÇÃO"
+    )
+    resultado["CLASSIFICAÇÃO"] = primeiro("CLASSIFICACAO", "CLASSIFICAÇÃO")
+    resultado["OBSERVAÇÕES"] = primeiro("OBSERVACOES", "OBSERVAÇÕES")
+    resultado["DATA ENVIO"] = primeiro("DATA ENVIO")
+    resultado["DATA RETORNO"] = primeiro("DATA RETORNO")
+    resultado["DURAÇÃO (MINUTOS)"] = primeiro("DURACAO_MINUTOS")
+    resultado["MUNICÍPIO ABASTECIMENTO"] = primeiro("CIDADE_ABAST")
+    resultado["MUNICÍPIO TELEMETRIA"] = primeiro(
+        "MUNICIPIO_TELEMETRIA", "MUNICIPIO"
+    )
+    resultado["BAIRRO ABASTECIMENTO"] = primeiro("BAIRRO_ABAST")
+    resultado["LATITUDE ABASTECIMENTO"] = primeiro("LATITUDE_ABAST")
+    resultado["LONGITUDE ABASTECIMENTO"] = primeiro("LONGITUDE_ABAST")
+    resultado["LATITUDE TELEMETRIA"] = primeiro(
+        "LATITUDE_TELEMETRIA", "LATITUDE"
+    )
+    resultado["LONGITUDE TELEMETRIA"] = primeiro(
+        "LONGITUDE_TELEMETRIA", "LONGITUDE"
+    )
+    resultado["MÉTODO VERIFICAÇÃO ENDEREÇO"] = primeiro(
+        "METODO_VERIFICACAO_ENDERECO"
+    )
+    resultado["DISTÂNCIA ENDEREÇOS (M)"] = distancia_m
+
+    if "PARADA" in str(origem).upper():
+        resultado["TIPO DE DESVIO"] = "MOTOR LIGADO - VEÍCULO PARADO"
+        vazios = resultado["DETALHES DA COMPARAÇÃO"].astype(str).str.strip() == ""
+        resultado.loc[vazios, "DETALHES DA COMPARAÇÃO"] = (
+            "Motor ligado e veículo parado no período identificado."
+        )
+
+    for coluna in ["DATA", "DATA TELEMETRIA", "DATA ENVIO", "DATA RETORNO"]:
+        resultado[coluna] = pd.to_datetime(
+            resultado[coluna], dayfirst=True, errors="coerce"
+        )
+
+    return resultado[COLUNAS_PADRAO_DESVIOS]
+
+
+def consolidar_desvios_padronizados(desvios, desvios_abast, paradas):
+    blocos = []
+    for df, origem in [
+        (desvios, "Desvios"),
+        (desvios_abast, "Abastecimento_x_Telemetria"),
+        (paradas, "Paradas_Motor_Ligado"),
+    ]:
+        if isinstance(df, pd.DataFrame) and not df.empty:
+            blocos.append(padronizar_desvios(df, origem))
+
+    if not blocos:
+        return pd.DataFrame(columns=COLUNAS_PADRAO_DESVIOS)
+
+    return pd.concat(blocos, ignore_index=True).drop_duplicates().reset_index(drop=True)
+
+
 # ============================================================
 # GERAR EXCEL DE AUDITORIA
 # ============================================================
@@ -5101,161 +5301,86 @@ def gerar_excel_auditoria(
     paradas,
     desvios_abast=None
 ):
-
     if desvios_abast is None:
         desvios_abast = pd.DataFrame()
 
-    if not desvios_abast.empty:
-
-        desvios = pd.concat(
-            [
-                desvios,
-                desvios_abast
-            ],
-            ignore_index=True,
-            sort=False
-        )
+    desvios_padronizados = consolidar_desvios_padronizados(
+        desvios, desvios_abast, paradas
+    )
 
     resumo = []
-
-    if not desvios.empty:
-
+    if not desvios_padronizados.empty:
         for tipo, qtd in (
-            desvios[
-                "TIPO_DESVIO"
-            ].value_counts().items()
+            desvios_padronizados["TIPO DE DESVIO"]
+            .replace("", "SEM TIPO")
+            .value_counts()
+            .items()
         ):
+            resumo.append({
+                "CATEGORIA": tipo,
+                "QUANTIDADE": int(qtd),
+            })
 
-            resumo.append(
-                {
-                    "CATEGORIA":
-                        tipo,
+    df_resumo = pd.DataFrame(resumo, columns=["CATEGORIA", "QUANTIDADE"])
 
-                    "QUANTIDADE":
-                        int(qtd),
-                }
-            )
+    with pd.ExcelWriter(ARQUIVO_AUDITORIA, engine="openpyxl") as writer:
+        telemetria.to_excel(writer, sheet_name="Telemetria", index=False)
+        desvios_padronizados.to_excel(writer, sheet_name="Desvios", index=False)
 
-    if not paradas.empty:
-
-        for tipo, qtd in (
-            paradas[
-                "CRITICIDADE"
-            ].value_counts().items()
-        ):
-
-            resumo.append(
-                {
-                    "CATEGORIA":
-                        f"PARADA - {tipo}",
-
-                    "QUANTIDADE":
-                        int(qtd),
-                }
-            )
-
-    df_resumo = pd.DataFrame(
-        resumo,
-        columns=[
-            "CATEGORIA",
-            "QUANTIDADE"
-        ]
-    )
-
-    with pd.ExcelWriter(
-        ARQUIVO_AUDITORIA,
-        engine="openpyxl"
-    ) as writer:
-
-        telemetria.to_excel(
-            writer,
-            sheet_name="Telemetria",
-            index=False
+        padronizar_desvios(
+            desvios_abast, "Abastecimento_x_Telemetria"
+        ).to_excel(
+            writer, sheet_name="Abastecimento_x_Telemetria", index=False
         )
 
-        desvios.to_excel(
-            writer,
-            sheet_name="Desvios",
-            index=False
+        padronizar_desvios(
+            paradas, "Paradas_Motor_Ligado"
+        ).to_excel(
+            writer, sheet_name="Paradas_Motor_Ligado", index=False
         )
 
-        if not desvios_abast.empty:
+        df_resumo.to_excel(writer, sheet_name="Resumo", index=False)
 
-            desvios_abast.to_excel(
-                writer,
-                sheet_name=
-                    "Abastecimento_x_Telemetria",
-                index=False
-            )
-
-        paradas.to_excel(
-            writer,
-            sheet_name=
-                "Paradas_Motor_Ligado",
-            index=False
-        )
-
-        df_resumo.to_excel(
-            writer,
-            sheet_name="Resumo",
-            index=False
-        )
-
-    wb = load_workbook(
-        ARQUIVO_AUDITORIA
-    )
+    wb = load_workbook(ARQUIVO_AUDITORIA)
 
     for ws in wb.worksheets:
-
         ws.freeze_panes = "A2"
-
         if ws.max_row >= 1:
-
-            ws.auto_filter.ref = (
-                ws.dimensions
-            )
+            ws.auto_filter.ref = ws.dimensions
 
         for cell in ws[1]:
-
-            cell.font = Font(
-                bold=True
-            )
-
-            cell.alignment = Alignment(
-                horizontal="center",
-                vertical="center"
-            )
+            cell.font = Font(bold=True)
+            cell.alignment = Alignment(horizontal="center", vertical="center")
 
         for col in ws.columns:
-
-            maior = max(
-                10,
-                max(
-                    len(
-                        str(
-                            c.value
-                            or ""
-                        )
-                    )
-                    for c in col
-                ) + 2
-            )
-
+            maior = max(10, max(len(str(c.value or "")) for c in col) + 2)
             ws.column_dimensions[
-                get_column_letter(
-                    col[0].column
-                )
-            ].width = min(
-                maior,
-                60
-            )
+                get_column_letter(col[0].column)
+            ].width = min(maior, 60)
 
-    wb.save(
-        ARQUIVO_AUDITORIA
-    )
+    for nome_aba in [
+        "Desvios", "Abastecimento_x_Telemetria", "Paradas_Motor_Ligado"
+    ]:
+        if nome_aba not in wb.sheetnames:
+            continue
+        ws = wb[nome_aba]
+        headers = {str(c.value): c.column for c in ws[1]}
 
+        for nome_coluna in [
+            "DATA", "DATA TELEMETRIA", "DATA ENVIO", "DATA RETORNO"
+        ]:
+            col = headers.get(nome_coluna)
+            if col:
+                for row in range(2, ws.max_row + 1):
+                    ws.cell(row=row, column=col).number_format = "dd/mm/yyyy hh:mm:ss"
+
+        col_dur = headers.get("DURAÇÃO (MINUTOS)")
+        if col_dur:
+            for row in range(2, ws.max_row + 1):
+                ws.cell(row=row, column=col_dur).number_format = "0.0"
+
+    wb.save(ARQUIVO_AUDITORIA)
     return ARQUIVO_AUDITORIA
-
 
 # ============================================================
 # EXECUTAR AUDITORIA
@@ -6574,125 +6699,57 @@ def enviar_resultados_google_sheets(df):
 # ============================================================
 
 def gerar_unificado_desvios():
-
-    print(
-        "\n" + "=" * 70
-    )
-
-    print(
-        "GERANDO UNIFICADO DE DESVIOS"
-    )
-
-    print(
-        "=" * 70
-    )
+    print("\n" + "=" * 70)
+    print("GERANDO UNIFICADO DE DESVIOS")
+    print("=" * 70)
 
     todos = []
 
     if ARQUIVO_AUDITORIA.exists():
-
         try:
-
-            xls = pd.ExcelFile(
-                ARQUIVO_AUDITORIA
-            )
-
+            xls = pd.ExcelFile(ARQUIVO_AUDITORIA)
             for aba in [
                 "Desvios",
                 "Abastecimento_x_Telemetria",
                 "Paradas_Motor_Ligado",
             ]:
-
                 if aba not in xls.sheet_names:
                     continue
 
-                df = pd.read_excel(
-                    ARQUIVO_AUDITORIA,
-                    sheet_name=aba
-                )
+                df = pd.read_excel(ARQUIVO_AUDITORIA, sheet_name=aba)
+                if df.empty:
+                    continue
 
-                if not df.empty:
-
-                    df[
-                        "ABA_ORIGEM"
-                    ] = aba
-
-                    todos.append(
-                        df
-                    )
+                if set(COLUNAS_PADRAO_DESVIOS).issubset(df.columns):
+                    padrao = df[COLUNAS_PADRAO_DESVIOS].copy()
+                else:
+                    padrao = padronizar_desvios(df, aba)
+                todos.append(padrao)
 
         except Exception as erro:
-
-            print(
-                f"⚠ Erro lendo auditoria: "
-                f"{erro}"
-            )
+            print(f"⚠ Erro lendo auditoria: {erro}")
 
     if todos:
-
-        final = (
-            pd.concat(
-                todos,
-                ignore_index=True,
-                sort=False
-            )
-            .drop_duplicates()
-            .reset_index(drop=True)
-        )
-
+        final = pd.concat(todos, ignore_index=True).drop_duplicates().reset_index(drop=True)
+        final = final[COLUNAS_PADRAO_DESVIOS]
     else:
+        final = pd.DataFrame(columns=COLUNAS_PADRAO_DESVIOS)
 
-        final = pd.DataFrame(
-            columns=[
-                "PLACA",
-                "DATA_HORA",
-                "TIPO_DESVIO",
-                "CRITICIDADE",
-                "DETALHE",
-                "ABA_ORIGEM",
-            ]
-        )
+    with pd.ExcelWriter(ARQUIVO_UNIFICADO, engine="openpyxl") as writer:
+        final.to_excel(writer, sheet_name="Desvios", index=False)
 
-    with pd.ExcelWriter(
-        ARQUIVO_UNIFICADO,
-        engine="openpyxl"
-    ) as writer:
+    formatar_excel(ARQUIVO_UNIFICADO, "Desvios")
 
-        final.to_excel(
-            writer,
-            sheet_name="Desvios",
-            index=False
-        )
-
-    formatar_excel(
-        ARQUIVO_UNIFICADO,
-        "Desvios"
-    )
-
-    print(
-        f"✓ UNIFICADO GERADO: "
-        f"{ARQUIVO_UNIFICADO.resolve()}"
-    )
-
-    print(
-        f"✓ Registros: "
-        f"{len(final)}"
-    )
-
-    # ========================================================
-    # GOOGLE SHEETS
-    # Envia exatamente o mesmo DataFrame usado no Excel.
-    # ========================================================
+    print(f"✓ UNIFICADO GERADO: {ARQUIVO_UNIFICADO.resolve()}")
+    print(f"✓ Registros: {len(final)}")
 
     enviado = enviar_resultados_google_sheets(final)
-
     if enviado:
         print("✓ O Google Sheets recebeu os mesmos dados do Excel.")
     else:
         print("⚠ O Excel foi gerado, mas o envio para RESULTADOS falhou.")
 
     return ARQUIVO_UNIFICADO
-
 
 # ============================================================
 # MAIN
