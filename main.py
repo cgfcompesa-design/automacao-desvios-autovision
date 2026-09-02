@@ -6621,7 +6621,7 @@ def enviar_resultados_google_sheets(df):
         return False
 
     max_tentativas = 3
-    delay_inicial = 2
+    delay_inicial = 6
 
     for tentativa in range(1, max_tentativas + 1):
         print(f"\n📤 Tentativa {tentativa}/{max_tentativas}...")
@@ -6684,7 +6684,7 @@ def enviar_resultados_google_sheets(df):
             print(f"❌ ERRO NA TENTATIVA {tentativa}: {erro}")
 
             if tentativa < max_tentativas:
-                espera = delay_inicial * (2 ** (tentativa - 1))
+                espera = delay_inicial * (3 ** (tentativa - 1))
                 print(f"⏳ Aguardando {espera}s antes de tentar novamente...")
                 time.sleep(espera)
             else:
