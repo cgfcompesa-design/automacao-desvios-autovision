@@ -52,15 +52,16 @@ URL_RELATORIO_POSICAO = (
 # ============================================================
 
 URL_ABASTECIMENTO = (
-    "https://docs.google.com/spreadsheets/d/e/"
-    "2PACX-1vTNyx3mdkh9hF027_l61y7O7dwYr_gF5ofFwi0mzRY0eNQuKCu3KR3peiCn7Q_832YRjaxR3rqxQGaB/"
-    "pub?gid=1282350705&single=true&output=csv"
+"https://docs.google.com/spreadsheets/d/e/"
+"2PACX-1vRSxDLGYNGsNUXQcxNEqsdMpjd1OjQJGnK2R3iXMmYZZoS9ZoLVCjlpRowQHcXdILfbU7jNhd8q3exb/"
+"pub?gid=100365991&single=true&output=csv"
 )
+
 
 URL_ABASTECIMENTO_EDIT = (
     "https://docs.google.com/spreadsheets/d/"
-    "1NdRe71fCKND18sIOdcivRhhwTJYS4JnMjJfGUaAbZuM/"
-    "edit?gid=1282350705#gid=1282350705"
+    "1SoMqFje4gkWaM8ccMH0sksBuCTynSEP8T6NVhXn_fVg"
+    "edit?gid=100365991#gid=100365991"
 )
 
 
@@ -117,12 +118,15 @@ TEMPO_AGUARDAR_MUNICIPIO = 140
 #
 URL_PLANILHA_RESULTADOS_CSV = (
     "https://docs.google.com/spreadsheets/d/e/"
-    "2PACX-1vQU22jWG-2LuGLDuLYvVQoBbv5JdArq9WUwGcJ3znHPZWHrFABji3IFNFwYCtVX7u8uo-Rd7YJFb9fZ/"
-    "pub?output=csv"
+    "2PACX-1vQ_A4GVRaEe70J9splF4SJhuytiTP3TIjfrXRke4qp-wYiEupFXGuIgGmACVLcTeQx27N4ridepjL5M/"
+    "pub?gid=626389278&single=true&output=csv"
 )
 
-GID_RESULTADOS = 633249610
-ABA_RESULTADOS = "RESULTADOS"
+
+
+
+GID_RESULTADOS = 626389278
+ABA_RESULTADOS = "RESULTADOS NOV"
 
 # Endpoint de escrita. O Apps Script deve estar publicado como
 # Aplicativo da Web e ter acesso à planilha de destino.
